@@ -16,6 +16,10 @@ pub enum Error {
     Decryption,
     #[error("field {0:?} was not found")]
     FieldNotFound(String),
+    #[error("field {0:?} is a file; use `psst download`")]
+    FileRequiresDownload(String),
+    #[error("field {0:?} is not a file")]
+    FieldNotFile(String),
     #[error("field {0:?} does not contain a valid TOTP URI")]
     InvalidTotp(String),
     #[error("refusing to write a secret to a terminal; pipe or redirect stdout")]
@@ -38,6 +42,18 @@ pub enum Error {
     InputSizeLimit(&'static str),
     #[error("{0} exceeded its maximum supported size")]
     ResponseSizeLimit(&'static str),
+    #[error("the share does not provide an attachment download token")]
+    AttachmentUnavailable,
+    #[error("1Password returned an unsupported attachment")]
+    UnsupportedAttachment,
+    #[error("the attachment size did not match its metadata")]
+    AttachmentSize,
+    #[error("the attachment failed its integrity check")]
+    AttachmentIntegrity,
+    #[error("the attachment could not be decrypted")]
+    AttachmentDecryption,
+    #[error("1Password returned an invalid attachment download URL")]
+    AttachmentUrl,
     #[error(transparent)]
     Http(#[from] reqwest::Error),
     #[error(transparent)]
@@ -57,6 +73,8 @@ impl Error {
             Self::UnsupportedContainer => "unsupported_container",
             Self::Decryption => "decryption_failed",
             Self::FieldNotFound(_) => "field_not_found",
+            Self::FileRequiresDownload(_) => "field_is_file",
+            Self::FieldNotFile(_) => "field_not_file",
             Self::InvalidTotp(_) => "invalid_totp",
             Self::SecretToTerminal => "secret_to_terminal",
             Self::ShareFromTerminal => "share_from_terminal",
@@ -67,6 +85,12 @@ impl Error {
             Self::UnsafeSocket => "socket_unsafe",
             Self::InputSizeLimit(_) => "input_too_large",
             Self::ResponseSizeLimit(_) => "response_too_large",
+            Self::AttachmentUnavailable => "attachment_unavailable",
+            Self::UnsupportedAttachment => "unsupported_attachment",
+            Self::AttachmentSize => "attachment_size_mismatch",
+            Self::AttachmentIntegrity => "attachment_integrity_failed",
+            Self::AttachmentDecryption => "attachment_decryption_failed",
+            Self::AttachmentUrl => "attachment_url_invalid",
             Self::Http(_) => "network_error",
             Self::Io(_) => "io_error",
             Self::Json(_) => "invalid_json",
@@ -81,8 +105,13 @@ impl Error {
             "unsupported_container"
             | "decryption_failed"
             | "invalid_json"
-            | "response_too_large" => 12,
-            "field_not_found" | "invalid_totp" => 20,
+            | "response_too_large"
+            | "unsupported_attachment"
+            | "attachment_size_mismatch"
+            | "attachment_integrity_failed"
+            | "attachment_decryption_failed"
+            | "attachment_url_invalid" => 12,
+            "field_not_found" | "field_is_file" | "field_not_file" | "invalid_totp" => 20,
             "secret_to_terminal" => 21,
             "session_not_found" => 22,
             _ => 30,

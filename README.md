@@ -38,6 +38,7 @@ $ psst fields "$session"
   }
 ]
 $ psst get "$session" -- password | command-that-reads-a-secret-from-stdin
+$ psst download "$session" -- receipt | command-that-reads-a-pdf
 $ psst close "$session"
 $ trap - EXIT
 ```
@@ -53,13 +54,27 @@ local session. Revoke an active multi-view link from the item's Sharing History
 in 1Password.
 
 `fields` returns an ordered JSON array containing `selector`, `label`, and
-`type`. Selectors are unique and stable for the session; duplicate names receive
+`type`. File fields also contain `filename` and their decrypted byte `size`:
+
+```json
+{
+  "selector": "receipt",
+  "label": "receipt",
+  "type": "file",
+  "filename": "receipt.pdf",
+  "size": 116736
+}
+```
+
+Selectors are unique and stable for the session; duplicate names receive
 numeric suffixes. Consumers should ignore additional object keys added by a
 future release.
 
 `get` writes strings as raw bytes without a trailing newline and writes other
 values as JSON. TOTP fields return the current code. Credit-card expiration
-fields return `MM/YYYY`.
+fields return `MM/YYYY`. File values are available only through `download`,
+which verifies and decrypts the attachment before writing its original bytes.
+Attachments are currently limited to 64 MiB.
 
 ## Output safety
 
@@ -67,7 +82,8 @@ fields return `MM/YYYY`.
 its own argument list. The producing command and its logs must also keep the URL
 private. `open` refuses terminal input.
 
-`get` refuses terminal output before asking the daemon to decrypt a value:
+`get` and `download` refuse terminal output before asking the daemon to decrypt
+a value:
 
 ```text
 error secret_to_terminal: refusing to write a secret to a terminal; pipe or redirect stdout

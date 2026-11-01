@@ -13,7 +13,10 @@ use sha2::{Sha256, Sha512};
 use url::Url;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::error::{Error, Result};
+use crate::{
+    attachment::Attachment,
+    error::{Error, Result},
+};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FieldSummary {
@@ -21,10 +24,16 @@ pub struct FieldSummary {
     pub label: String,
     #[serde(rename = "type")]
     pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
 }
 
 #[derive(Deserialize)]
 struct Details {
+    #[serde(default)]
+    fields: Vec<Field>,
     #[serde(default)]
     sections: Vec<Section>,
 }
@@ -37,14 +46,16 @@ struct Section {
 
 #[derive(Deserialize)]
 struct Field {
-    #[serde(default, rename = "n")]
+    #[serde(default, rename = "n", alias = "name")]
     name: String,
-    #[serde(default, rename = "t")]
+    #[serde(default, rename = "t", alias = "title")]
     label: String,
-    #[serde(default, rename = "k")]
+    #[serde(default, rename = "k", alias = "type")]
     kind: String,
-    #[serde(default, rename = "v")]
+    #[serde(default, rename = "v", alias = "value")]
     value: Option<Value>,
+    #[serde(default)]
+    designation: String,
 }
 
 impl Drop for Field {
@@ -52,6 +63,7 @@ impl Drop for Field {
         self.name.zeroize();
         self.label.zeroize();
         self.kind.zeroize();
+        self.designation.zeroize();
         if let Some(value) = &mut self.value {
             zeroize_value(value);
         }
@@ -98,10 +110,15 @@ pub fn list_fields(json: &[u8]) -> Result<Vec<FieldSummary>> {
     let details: Details = serde_json::from_slice(json)?;
     Ok(project_fields(details)
         .into_iter()
-        .map(|field| FieldSummary {
-            selector: field.selector,
-            label: field.field.label.clone(),
-            kind: field.field.kind.clone(),
+        .map(|field| {
+            let attachment = attachment_from_field(&field.field).ok();
+            FieldSummary {
+                selector: field.selector,
+                label: field_label(&field.field).into(),
+                kind: field_kind(&field.field).into(),
+                filename: attachment.as_ref().map(|file| file.file_name.clone()),
+                size: attachment.as_ref().map(|file| file.unencrypted_size),
+            }
         })
         .collect())
 }
@@ -112,6 +129,9 @@ pub fn get_field(json: &[u8], selector: &str) -> Result<SecretValue> {
         .into_iter()
         .find(|field| field.selector == selector)
         .ok_or_else(|| Error::FieldNotFound(selector.into()))?;
+    if field.field.kind == "file" {
+        return Err(Error::FileRequiresDownload(selector.into()));
+    }
     let value = field
         .field
         .value
@@ -119,6 +139,24 @@ pub fn get_field(json: &[u8], selector: &str) -> Result<SecretValue> {
         .ok_or_else(|| Error::FieldNotFound(selector.into()))?;
 
     Ok(SecretValue(format_value(&field.field, value)?))
+}
+
+pub fn get_attachment(json: &[u8], selector: &str) -> Result<Attachment> {
+    let details: Details = serde_json::from_slice(json)?;
+    let field = project_fields(details)
+        .into_iter()
+        .find(|field| field.selector == selector)
+        .ok_or_else(|| Error::FieldNotFound(selector.into()))?;
+    if field.field.kind != "file" {
+        return Err(Error::FieldNotFile(selector.into()));
+    }
+
+    attachment_from_field(&field.field).map_err(|_| Error::UnsupportedAttachment)
+}
+
+fn attachment_from_field(field: &Field) -> Result<Attachment> {
+    let value = field.value.as_ref().ok_or(Error::UnsupportedAttachment)?;
+    Ok(serde_json::from_value(value.clone())?)
 }
 
 struct ProjectedField {
@@ -131,9 +169,14 @@ fn project_fields(details: Details) -> Vec<ProjectedField> {
     let mut next_suffix = HashMap::<String, usize>::new();
 
     details
-        .sections
+        .fields
         .into_iter()
-        .flat_map(|section| section.fields)
+        .chain(
+            details
+                .sections
+                .into_iter()
+                .flat_map(|section| section.fields),
+        )
         .filter(|field| field.value.as_ref().is_some_and(is_populated))
         .map(|field| {
             let base = selector_base(&field);
@@ -157,6 +200,10 @@ fn project_fields(details: Details) -> Vec<ProjectedField> {
 }
 
 fn selector_base(field: &Field) -> String {
+    if !field.designation.is_empty() {
+        return field.designation.clone();
+    }
+
     if !field.name.is_empty() {
         return field.name.clone();
     }
@@ -164,6 +211,24 @@ fn selector_base(field: &Field) -> String {
     match slug(&field.label) {
         slug if slug.is_empty() => "field".into(),
         slug => slug,
+    }
+}
+
+fn field_label(field: &Field) -> &str {
+    if !field.label.is_empty() {
+        return &field.label;
+    }
+    if !field.designation.is_empty() {
+        return &field.designation;
+    }
+    &field.name
+}
+
+fn field_kind(field: &Field) -> &str {
+    match field.kind.as_str() {
+        "P" => "concealed",
+        "T" | "E" => "string",
+        kind => kind,
     }
 }
 
@@ -316,6 +381,81 @@ mod tests {
                 "label": "username",
                 "type": "string"
             })
+        );
+    }
+
+    #[test]
+    fn lists_login_fields_from_legacy_details() {
+        let details = br#"{
+            "fields": [
+                {
+                    "designation":"username",
+                    "name":"email",
+                    "type":"T",
+                    "value":"evan@example.com"
+                },
+                {
+                    "designation":"password",
+                    "name":"password",
+                    "type":"P",
+                    "value":"secret"
+                }
+            ]
+        }"#;
+        let fields = list_fields(details).expect("valid login details");
+
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].selector, "username");
+        assert_eq!(fields[0].label, "username");
+        assert_eq!(fields[0].kind, "string");
+        assert_eq!(fields[1].selector, "password");
+        assert_eq!(fields[1].label, "password");
+        assert_eq!(fields[1].kind, "concealed");
+        assert_secret(details, "username", b"evan@example.com");
+        assert_secret(details, "password", b"secret");
+    }
+
+    #[test]
+    fn lists_file_metadata_and_reserves_file_values_for_download() {
+        let details = br#"{
+            "sections": [{
+                "fields": [{
+                    "n":"receipt",
+                    "t":"receipt",
+                    "k":"file",
+                    "v":{
+                        "documentId":"document",
+                        "encryptedSize":23,
+                        "encryptionKey":{"alg":"A256GCM","k":"key"},
+                        "fileName":"receipt.pdf",
+                        "integrityHash":"hash",
+                        "nonce":"nonce",
+                        "unencryptedSize":7
+                    }
+                }]
+            }]
+        }"#;
+        let fields = list_fields(details).expect("valid item details");
+
+        assert_eq!(
+            serde_json::to_value(&fields[0]).expect("serializable summary"),
+            serde_json::json!({
+                "selector": "receipt",
+                "label": "receipt",
+                "type": "file",
+                "filename": "receipt.pdf",
+                "size": 7
+            })
+        );
+        assert!(matches!(
+            get_field(details, "receipt"),
+            Err(Error::FileRequiresDownload(field)) if field == "receipt"
+        ));
+        assert_eq!(
+            get_attachment(details, "receipt")
+                .expect("file attachment")
+                .file_name,
+            "receipt.pdf"
         );
     }
 

@@ -9,6 +9,7 @@ pub enum Request {
     Open { url: String },
     Fields { session: String },
     Get { session: String, field: String },
+    Download { session: String, field: String },
     Close { session: String },
 }
 
@@ -17,7 +18,7 @@ impl Drop for Request {
         match self {
             Self::Open { url } => url.zeroize(),
             Self::Fields { session } | Self::Close { session } => session.zeroize(),
-            Self::Get { session, field } => {
+            Self::Get { session, field } | Self::Download { session, field } => {
                 session.zeroize();
                 field.zeroize();
             }
@@ -31,6 +32,7 @@ pub enum Response {
     Opened { session: String },
     Fields { fields: Vec<FieldSummary> },
     Secret { value: SecretValue },
+    Attachment { size: u64 },
     Closed,
     Error { code: String, message: String },
 }

@@ -1,3 +1,4 @@
+mod attachment;
 mod client;
 mod crypto;
 mod daemon;
@@ -49,6 +50,14 @@ enum Command {
         /// Opaque identifier returned by `psst open`.
         session: String,
         /// Exact selector returned by `psst fields`.
+        #[arg(allow_hyphen_values = true)]
+        field: String,
+    },
+    /// Decrypt an attached file and write its bytes to stdout.
+    Download {
+        /// Opaque identifier returned by `psst open`.
+        session: String,
+        /// Exact file selector returned by `psst fields`.
         #[arg(allow_hyphen_values = true)]
         field: String,
     },
@@ -133,6 +142,11 @@ fn run(command: Command) -> Result<()> {
                 response => unexpected(response),
             }
         }
+        Command::Download { session, field } => {
+            let mut stdout = std::io::stdout();
+            refuse_terminal(stdout.is_terminal())?;
+            request_attachment(Request::Download { session, field }, &mut stdout)
+        }
         Command::Close { session } => match request(Request::Close { session })? {
             Response::Closed => Ok(()),
             response => unexpected(response),
@@ -140,15 +154,32 @@ fn run(command: Command) -> Result<()> {
     }
 }
 
-fn request(request: Request) -> Result<Response> {
-    let mut stream = connect()?;
-    stream.set_write_timeout(Some(DAEMON_WRITE_TIMEOUT))?;
-    stream.set_read_timeout(Some(DAEMON_READ_TIMEOUT))?;
-    let mut encoded = Zeroizing::new(serde_json::to_vec(&request)?);
-    encoded.push(b'\n');
-    stream.write_all(&encoded)?;
-    stream.shutdown(std::net::Shutdown::Write)?;
+fn request_attachment(request: Request, writer: &mut impl Write) -> Result<()> {
+    let mut stream = send_request(request)?;
+    let mut response = Zeroizing::new(Vec::new());
+    let mut reader = BufReader::new(&mut stream);
+    reader
+        .by_ref()
+        .take(MAX_DAEMON_RESPONSE_BYTES as u64 + 1)
+        .read_until(b'\n', &mut response)?;
+    if response.len() > MAX_DAEMON_RESPONSE_BYTES {
+        return Err(Error::ResponseSizeLimit("daemon response"));
+    }
+    match serde_json::from_slice(&response)? {
+        Response::Attachment { size } => {
+            let copied = std::io::copy(&mut reader.by_ref().take(size), writer)?;
+            if copied != size {
+                return Err(Error::AttachmentSize);
+            }
+            Ok(())
+        }
+        Response::Error { code, message } => Err(Error::Remote { code, message }),
+        response => unexpected(response),
+    }
+}
 
+fn request(request: Request) -> Result<Response> {
+    let stream = send_request(request)?;
     let mut response = Zeroizing::new(Vec::new());
     BufReader::new(stream)
         .take(MAX_DAEMON_RESPONSE_BYTES as u64 + 1)
@@ -161,6 +192,18 @@ fn request(request: Request) -> Result<Response> {
         Response::Error { code, message } => Err(Error::Remote { code, message }),
         response => Ok(response),
     }
+}
+
+fn send_request(request: Request) -> Result<UnixStream> {
+    let mut stream = connect()?;
+    stream.set_write_timeout(Some(DAEMON_WRITE_TIMEOUT))?;
+    stream.set_read_timeout(Some(DAEMON_READ_TIMEOUT))?;
+    let mut encoded = Zeroizing::new(serde_json::to_vec(&request)?);
+    encoded.push(b'\n');
+    stream.write_all(&encoded)?;
+    stream.shutdown(std::net::Shutdown::Write)?;
+
+    Ok(stream)
 }
 
 fn connect() -> Result<UnixStream> {

@@ -16,6 +16,7 @@ use rand::RngCore;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
+    attachment,
     client::{self, EncryptedItem},
     crypto::{self, EncryptedContainer},
     error::{Error, Result},
@@ -32,15 +33,19 @@ struct Session {
     key: Zeroizing<[u8; 32]>,
     overview: EncryptedContainer,
     details: EncryptedContainer,
+    share_uuid: String,
+    file_download: Option<client::FileDownload>,
     expires_at: Instant,
 }
 
 impl Session {
-    fn new(key: Zeroizing<[u8; 32]>, item: EncryptedItem) -> Self {
+    fn new(key: Zeroizing<[u8; 32]>, share_uuid: String, item: EncryptedItem) -> Self {
         Self {
             key,
             overview: item.overview,
             details: item.details,
+            share_uuid,
+            file_download: item.file_download,
             expires_at: Instant::now() + SESSION_TTL,
         }
     }
@@ -131,17 +136,27 @@ fn handle_connection(stream: &mut UnixStream, sessions: &mut HashMap<String, Ses
         return;
     }
 
-    let response = read_request(stream)
-        .and_then(|request| handle(request, sessions))
-        .unwrap_or_else(|error| Response::Error {
-            code: error.code().into(),
-            message: error.to_string(),
-        });
+    let reply = read_request(stream).and_then(|request| handle(request, sessions));
+    let (response, body) = match reply {
+        Ok(reply) => reply,
+        Err(error) => (
+            Response::Error {
+                code: error.code().into(),
+                message: error.to_string(),
+            },
+            None,
+        ),
+    };
     let Ok(mut encoded) = serde_json::to_vec(&response).map(Zeroizing::new) else {
         return;
     };
     encoded.push(b'\n');
-    let _ = stream.write_all(&encoded);
+    if stream.write_all(&encoded).is_err() {
+        return;
+    }
+    if let Some(body) = body {
+        let _ = stream.write_all(&body);
+    }
 }
 
 fn read_request(stream: &UnixStream) -> Result<Request> {
@@ -156,21 +171,30 @@ fn read_request(stream: &UnixStream) -> Result<Request> {
     Ok(serde_json::from_slice(&line)?)
 }
 
-fn handle(request: Request, sessions: &mut HashMap<String, Session>) -> Result<Response> {
+fn handle(
+    request: Request,
+    sessions: &mut HashMap<String, Session>,
+) -> Result<(Response, Option<Zeroizing<Vec<u8>>>)> {
     match request {
         Request::Open { ref url } => {
             let keys = crypto::keys_from_link(url)?;
             let item = client::fetch(&keys)?;
             let id = session_id();
-            sessions.insert(id.clone(), Session::new(keys.encryption_key, item));
-            Ok(Response::Opened { session: id })
+            sessions.insert(
+                id.clone(),
+                Session::new(keys.encryption_key, keys.uuid, item),
+            );
+            Ok((Response::Opened { session: id }, None))
         }
         Request::Fields { ref session } => {
             let session = active_session(sessions, session)?;
             let details = session.decrypt_details()?;
-            Ok(Response::Fields {
-                fields: item::list_fields(&details)?,
-            })
+            Ok((
+                Response::Fields {
+                    fields: item::list_fields(&details)?,
+                },
+                None,
+            ))
         }
         Request::Get {
             ref session,
@@ -178,15 +202,34 @@ fn handle(request: Request, sessions: &mut HashMap<String, Session>) -> Result<R
         } => {
             let session = active_session(sessions, session)?;
             let details = session.decrypt_details()?;
-            Ok(Response::Secret {
-                value: item::get_field(&details, field)?,
-            })
+            Ok((
+                Response::Secret {
+                    value: item::get_field(&details, field)?,
+                },
+                None,
+            ))
+        }
+        Request::Download {
+            ref session,
+            ref field,
+        } => {
+            let session = active_session(sessions, session)?;
+            let details = session.decrypt_details()?;
+            let attachment = item::get_attachment(&details, field)?;
+            let download = session
+                .file_download
+                .as_ref()
+                .ok_or(Error::AttachmentUnavailable)?;
+            let encrypted = client::fetch_attachment(&session.share_uuid, download, &attachment)?;
+            let plaintext = attachment::decrypt(&attachment, encrypted)?;
+            let size = plaintext.len() as u64;
+            Ok((Response::Attachment { size }, Some(plaintext)))
         }
         Request::Close { ref session } => {
             sessions
                 .remove(session)
                 .ok_or_else(|| Error::SessionNotFound(session.clone()))?;
-            Ok(Response::Closed)
+            Ok((Response::Closed, None))
         }
     }
 }
