@@ -2,15 +2,29 @@
 
 [![lint](https://github.com/evanpurkhiser/psst/actions/workflows/lint.yml/badge.svg)](https://github.com/evanpurkhiser/psst/actions/workflows/lint.yml)
 
-`psst`—Private Short-lived Secret Transfer—turns a public 1Password
-item-sharing link into a short-lived local session. It lets automation inspect
-an item's field structure before explicitly requesting a value.
+`psst`—Private Short-lived Secret Transfer—is a 1Password handoff tool for
+coding agents and other local automation. A human provides a public 1Password
+item-sharing link; the agent can inspect its field names and types, then
+explicitly retrieve only the values it needs.
+
+## Install
+
+`psst` requires Linux with a systemd user session.
 
 ```console
-$ printf '%s' "$ONEPASSWORD_SHARE_URL" | psst open
-o4d2l7sc6q3fcq2h
+$ cargo install --locked --git https://github.com/evanpurkhiser/psst
+```
 
-$ psst fields o4d2l7sc6q3fcq2h
+## Agent workflow
+
+Pass the share link on standard input, retain the returned session ID, and
+arrange cleanup immediately:
+
+```console
+$ set -euo pipefail
+$ session="$(printf '%s' "$ONEPASSWORD_SHARE_URL" | psst open)"
+$ trap 'psst close "$session" 2>/dev/null || true' EXIT
+$ psst fields "$session"
 [
   {
     "selector": "username",
@@ -23,74 +37,75 @@ $ psst fields o4d2l7sc6q3fcq2h
     "type": "concealed"
   }
 ]
-
-$ psst get o4d2l7sc6q3fcq2h password > /path/to/consumer
-$ psst close o4d2l7sc6q3fcq2h
+$ psst get "$session" -- password | command-that-reads-a-secret-from-stdin
+$ psst close "$session"
+$ trap - EXIT
 ```
 
-Share URLs are read from standard input so the capability does not appear in
-the process argument list. Field values are written only by `get`; callers
-must redirect or pipe them. `get` checks stdout before contacting the daemon
-and refuses to decrypt a value when stdout is a terminal:
+Agents should call `fields` first, use an exact returned `selector`, retrieve
+only required values, and close the session as soon as the consumer finishes.
+The `--` before a selector keeps names beginning with `-` from becoming options.
+A view-once share is consumed by `open`; losing its session ID or allowing the
+session to expire may make the item unrecoverable.
+
+`fields` returns an ordered JSON array containing `selector`, `label`, and
+`type`. Selectors are unique and stable for the session; duplicate names receive
+numeric suffixes. Consumers should ignore additional object keys added by a
+future release.
+
+`get` writes strings as raw bytes without a trailing newline and writes other
+values as JSON. TOTP fields return the current code. Credit-card expiration
+fields return `MM/YYYY`.
+
+## Output safety
+
+`open` accepts a share URL only on standard input, so `psst` never puts it in
+its own argument list. The producing command and its logs must also keep the URL
+private. `open` refuses terminal input.
+
+`get` refuses terminal output before asking the daemon to decrypt a value:
 
 ```text
 psst: refusing to write a secret to a terminal; pipe or redirect stdout
 ```
 
-This check distinguishes terminals from pipes and files. It cannot distinguish
-a legitimate pipe consumer from a process that captures piped output.
+Prefer a direct pipe to the consuming process. A terminal check cannot
+distinguish an intended consumer from a process that captures piped output, and
+a redirected file uses the caller's permissions and umask.
 
-## Session model
+Runtime errors go to stderr. Agents can request a stable error code and message
+as JSON:
 
-The first command starts a transient user service and communicates with it over
-a Unix socket in `$XDG_RUNTIME_DIR`. The socket is mode 0600. Each session has
-an opaque random identifier and expires five minutes after it is opened.
-`close` drops it immediately. The daemon exits after five idle minutes and has
-a one-hour systemd runtime limit as a final fail-safe.
+```console
+$ psst --error-format json fields expired-session
+{"code":"session_not_found","message":"session \"expired-session\" was not found or has expired"}
+```
 
-The transient service disables core dumps, prevents privilege escalation, uses
-a private temporary directory, and applies a mode-077 process umask.
+Exit statuses group failures by action: `10` for input, `11` for share access,
+`12` for protocol or decryption, `20` for fields, `21` for unsafe output, `22`
+for sessions, and `30` for local runtime failures.
 
-The daemon stores the encrypted item and its derived AES key. Plaintext exists
-only while handling `fields` or `get`. Plaintext buffers, derived keys, share
-tokens, request buffers, and selected values are zeroized when dropped. This
-reduces their lifetime; it does not defend against a process with permission to
-inspect this process's memory.
+## Session and security model
 
-Retrieving a view-once share consumes its view when `open` downloads it.
-Email-restricted shares are not supported yet.
+The first command uses `systemd-run --user` to start a hardened transient
+`psst-daemon` service. The CLI communicates with it through a mode-0600 Unix
+socket in `$XDG_RUNTIME_DIR`. Sessions use opaque random identifiers, expire
+five minutes after `open`, and can be destroyed earlier with `close`. The daemon
+exits after five idle minutes and has a one-hour systemd runtime limit.
 
-## Public-share decryption
+The daemon retains the encrypted item and its derived AES key. It decrypts item
+details only while servicing `fields` or `get`; sensitive buffers managed by
+`psst` are zeroized where practical when dropped. Core dumps are disabled for
+the CLI and daemon. These measures shorten plaintext lifetime but do not defend
+against another process permitted to inspect the user's memory.
 
-1Password documents the high-level protocol in its
-[security design](https://agilebits.github.io/security-design/share.html). A
-share URL fragment is a base64url-encoded 32-byte secret. The fragment stays on
-the recipient and is never included in an HTTP request.
-
-The current public client derives three values with HKDF-SHA256, an empty salt,
-and distinct `info` values:
-
-| Purpose | `info` | Length | Encoding |
-| --- | --- | ---: | --- |
-| Record locator | `share_item_uuid` | 16 bytes | lowercase Base32, no padding |
-| Retrieval token | `share_item_token` | 16 bytes | lowercase Base32, no padding |
-| Item key | `share_item_encryption_key` | 32 bytes | raw bytes |
-
-The client requests `/api/v1/share/{uuid}` with the retrieval token in the
-`OP-Share-Token` header. The response contains `encOverview` and `encDetails`
-containers. Both use AES-256-GCM with a 12-byte IV; the authentication tag is
-appended to the ciphertext in the container's base64url `data` member. The
-decrypted payload is UTF-8 JSON. Only populated fields from the details payload
-are exposed by `fields`.
-
-These wire-level details are not a versioned public API. Container algorithms
-and content types are validated before decryption so a protocol change fails
-closed instead of producing a plausible but incorrect value.
+Email-restricted shares are not supported. See [Protocol details](docs/protocol.md)
+for the public-share key derivation and encrypted container format.
 
 ## Development
 
 ```console
 $ mise install
-$ cargo test --all-targets
+$ cargo test --locked --all-targets
 $ prek run --all-files
 ```

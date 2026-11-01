@@ -32,5 +32,5 @@ pub enum Response {
     Fields { fields: Vec<FieldSummary> },
     Secret { value: SecretValue },
     Closed,
-    Error { message: String },
+    Error { code: String, message: String },
 }

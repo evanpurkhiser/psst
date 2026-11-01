@@ -41,13 +41,13 @@ pub fn keys_from_link(input: &str) -> Result<ShareKeys> {
     }
 
     let hkdf = Hkdf::<Sha256>::new(None, secret.as_slice());
-    let uuid = derive::<16>(&hkdf, b"share_item_uuid")?;
-    let token = derive::<16>(&hkdf, b"share_item_token")?;
+    let uuid = Zeroizing::new(derive::<16>(&hkdf, b"share_item_uuid")?);
+    let token = Zeroizing::new(derive::<16>(&hkdf, b"share_item_token")?);
     let encryption_key = derive::<32>(&hkdf, b"share_item_encryption_key")?;
 
     Ok(ShareKeys {
-        uuid: encode_identifier(&uuid),
-        token: Zeroizing::new(encode_identifier(&token)),
+        uuid: encode_identifier(&*uuid),
+        token: Zeroizing::new(encode_identifier(&*token)),
         encryption_key: Zeroizing::new(encryption_key),
     })
 }

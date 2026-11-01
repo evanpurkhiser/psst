@@ -2,7 +2,10 @@ use std::{
     collections::HashMap,
     env, fs,
     io::{BufRead, BufReader, Read, Write},
-    os::unix::{fs::PermissionsExt, net::UnixListener},
+    os::unix::{
+        fs::{FileTypeExt, MetadataExt, PermissionsExt},
+        net::{UnixListener, UnixStream},
+    },
     path::PathBuf,
     thread,
     time::{Duration, Instant},
@@ -22,7 +25,8 @@ use crate::{
 
 const SESSION_TTL: Duration = Duration::from_secs(300);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
+const IO_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
 struct Session {
     key: Zeroizing<[u8; 32]>,
@@ -55,9 +59,7 @@ impl Drop for Session {
 
 pub fn run() -> Result<()> {
     let socket_path = socket_path()?;
-    if socket_path.exists() {
-        fs::remove_file(&socket_path)?;
-    }
+    remove_stale_socket(&socket_path)?;
 
     let listener = UnixListener::bind(&socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
@@ -75,13 +77,7 @@ pub fn run() -> Result<()> {
         match listener.accept() {
             Ok((mut stream, _)) => {
                 idle_since = Instant::now();
-                let response = read_request(&stream)
-                    .and_then(|request| handle(request, &mut sessions))
-                    .unwrap_or_else(|error| Response::Error {
-                        message: error.to_string(),
-                    });
-                serde_json::to_writer(&mut stream, &response)?;
-                stream.write_all(b"\n")?;
+                handle_connection(&mut stream, &mut sessions);
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(POLL_INTERVAL);
@@ -96,15 +92,68 @@ pub fn run() -> Result<()> {
 
 pub fn socket_path() -> Result<PathBuf> {
     let runtime = env::var_os("XDG_RUNTIME_DIR").ok_or(Error::RuntimeDirectory)?;
+    let metadata = fs::metadata(&runtime)?;
+    if metadata.uid() != effective_uid() || metadata.mode() & 0o077 != 0 {
+        return Err(Error::UnsafeRuntimeDirectory);
+    }
+
     Ok(PathBuf::from(runtime).join("psst.sock"))
 }
 
-fn read_request(stream: &std::os::unix::net::UnixStream) -> Result<Request> {
-    let mut line = Zeroizing::new(String::new());
+fn remove_stale_socket(path: &std::path::Path) -> Result<()> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if !metadata.file_type().is_socket() || metadata.uid() != effective_uid() {
+        return Err(Error::UnsafeSocket);
+    }
+    if UnixStream::connect(path).is_ok() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "the psst daemon is already running",
+        )
+        .into());
+    }
+
+    fs::remove_file(path)?;
+    Ok(())
+}
+
+fn effective_uid() -> u32 {
+    // POSIX guarantees geteuid has no failure mode.
+    unsafe { libc::geteuid() }
+}
+
+fn handle_connection(stream: &mut UnixStream, sessions: &mut HashMap<String, Session>) {
+    if stream.set_read_timeout(Some(IO_TIMEOUT)).is_err()
+        || stream.set_write_timeout(Some(IO_TIMEOUT)).is_err()
+    {
+        return;
+    }
+
+    let response = read_request(stream)
+        .and_then(|request| handle(request, sessions))
+        .unwrap_or_else(|error| Response::Error {
+            code: error.code().into(),
+            message: error.to_string(),
+        });
+    let Ok(mut encoded) = serde_json::to_vec(&response).map(Zeroizing::new) else {
+        return;
+    };
+    encoded.push(b'\n');
+    let _ = stream.write_all(&encoded);
+}
+
+fn read_request(stream: &UnixStream) -> Result<Request> {
+    let mut line = Zeroizing::new(Vec::new());
     BufReader::new(stream)
-        .take(MAX_REQUEST_BYTES)
-        .read_line(&mut line)?;
-    Ok(serde_json::from_str(&line)?)
+        .take(MAX_REQUEST_BYTES as u64 + 1)
+        .read_until(b'\n', &mut line)?;
+    if line.len() > MAX_REQUEST_BYTES {
+        return Err(Error::InputSizeLimit("daemon request"));
+    }
+
+    Ok(serde_json::from_slice(&line)?)
 }
 
 fn handle(request: Request, sessions: &mut HashMap<String, Session>) -> Result<Response> {

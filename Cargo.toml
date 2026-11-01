@@ -18,8 +18,9 @@ clap = { version = "4.6", features = ["derive"] }
 data-encoding = "2.9"
 hkdf = "0.12"
 hmac = "0.12"
+libc = "0.2"
 rand = "0.9"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"

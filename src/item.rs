@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::Write,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -11,7 +11,7 @@ use serde_json::Value;
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use url::Url;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::{Error, Result};
 
@@ -96,59 +96,74 @@ impl Drop for SecretValue {
 
 pub fn list_fields(json: &[u8]) -> Result<Vec<FieldSummary>> {
     let details: Details = serde_json::from_slice(json)?;
-    let mut selectors = HashMap::<String, usize>::new();
-    let mut fields = Vec::new();
-
-    for field in details.sections.iter().flat_map(|section| &section.fields) {
-        if !field.value.as_ref().is_some_and(is_populated) {
-            continue;
-        }
-
-        let selector = selector_for(field, &mut selectors);
-        fields.push(FieldSummary {
-            selector,
-            label: field.label.clone(),
-            kind: field.kind.clone(),
-        });
-    }
-
-    Ok(fields)
+    Ok(project_fields(details)
+        .into_iter()
+        .map(|field| FieldSummary {
+            selector: field.selector,
+            label: field.field.label.clone(),
+            kind: field.field.kind.clone(),
+        })
+        .collect())
 }
 
 pub fn get_field(json: &[u8], selector: &str) -> Result<SecretValue> {
     let details: Details = serde_json::from_slice(json)?;
-    let mut selectors = HashMap::<String, usize>::new();
+    let mut field = project_fields(details)
+        .into_iter()
+        .find(|field| field.selector == selector)
+        .ok_or_else(|| Error::FieldNotFound(selector.into()))?;
+    let value = field
+        .field
+        .value
+        .take()
+        .ok_or_else(|| Error::FieldNotFound(selector.into()))?;
 
-    for mut field in details
+    Ok(SecretValue(format_value(&field.field, value)?))
+}
+
+struct ProjectedField {
+    selector: String,
+    field: Field,
+}
+
+fn project_fields(details: Details) -> Vec<ProjectedField> {
+    let mut used = HashSet::new();
+    let mut next_suffix = HashMap::<String, usize>::new();
+
+    details
         .sections
         .into_iter()
         .flat_map(|section| section.fields)
-    {
-        let field_selector = selector_for(&field, &mut selectors);
-        let Some(value) = field.value.take().filter(is_populated) else {
-            continue;
-        };
+        .filter(|field| field.value.as_ref().is_some_and(is_populated))
+        .map(|field| {
+            let base = selector_base(&field);
+            let mut suffix = *next_suffix.entry(base.clone()).or_insert(1);
+            let selector = loop {
+                let candidate = if suffix == 1 {
+                    base.clone()
+                } else {
+                    format!("{base}-{suffix}")
+                };
+                suffix += 1;
+                if used.insert(candidate.clone()) {
+                    break candidate;
+                }
+            };
+            next_suffix.insert(base, suffix);
 
-        if selector == field_selector || selector.eq_ignore_ascii_case(&field.label) {
-            return Ok(SecretValue(format_value(&field, value)?));
-        }
-    }
-
-    Err(Error::FieldNotFound(selector.into()))
+            ProjectedField { selector, field }
+        })
+        .collect()
 }
 
-fn selector_for(field: &Field, selectors: &mut HashMap<String, usize>) -> String {
-    let base = if field.name.is_empty() {
-        slug(&field.label)
-    } else {
-        field.name.clone()
-    };
-    let count = selectors.entry(base.clone()).or_default();
-    *count += 1;
+fn selector_base(field: &Field) -> String {
+    if !field.name.is_empty() {
+        return field.name.clone();
+    }
 
-    match *count {
-        1 => base,
-        occurrence => format!("{base}-{occurrence}"),
+    match slug(&field.label) {
+        slug if slug.is_empty() => "field".into(),
+        slug => slug,
     }
 }
 
@@ -184,10 +199,9 @@ fn totp_at(uri: &str, timestamp: u64) -> Option<String> {
     }
 
     let parameters = uri.query_pairs().collect::<HashMap<_, _>>();
-    let secret = parameters.get("secret")?.replace([' ', '='], "");
-    let secret = BASE32_NOPAD
-        .decode(secret.to_ascii_uppercase().as_bytes())
-        .ok()?;
+    let encoded_secret = Zeroizing::new(parameters.get("secret")?.replace([' ', '='], ""));
+    let upper_secret = Zeroizing::new(encoded_secret.to_ascii_uppercase());
+    let secret = Zeroizing::new(BASE32_NOPAD.decode(upper_secret.as_bytes()).ok()?);
     let period = parameters
         .get("period")
         .map(|value| value.parse::<u64>().ok())
@@ -201,7 +215,7 @@ fn totp_at(uri: &str, timestamp: u64) -> Option<String> {
     }
 
     let counter = (timestamp / period).to_be_bytes();
-    let digest = match parameters
+    let digest = Zeroizing::new(match parameters
         .get("algorithm")
         .map(|value| value.to_ascii_uppercase())
         .as_deref()
@@ -223,7 +237,7 @@ fn totp_at(uri: &str, timestamp: u64) -> Option<String> {
             Some(mac.finalize().into_bytes().to_vec())
         }
         _ => return None,
-    }?;
+    }?);
     let offset = usize::from(digest.last()? & 0x0f);
     let bytes: [u8; 4] = digest.get(offset..offset + 4)?.try_into().ok()?;
     let binary = u32::from_be_bytes(bytes) & 0x7fff_ffff;
@@ -262,7 +276,13 @@ fn zeroize_value(value: &mut Value) {
     match value {
         Value::String(value) => value.zeroize(),
         Value::Array(values) => values.iter_mut().for_each(zeroize_value),
-        Value::Object(values) => values.values_mut().for_each(zeroize_value),
+        Value::Object(values) => {
+            let values = std::mem::take(values);
+            for (mut key, mut value) in values {
+                key.zeroize();
+                zeroize_value(&mut value);
+            }
+        }
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
@@ -289,6 +309,14 @@ mod tests {
         assert_eq!(fields[0].selector, "username");
         assert_eq!(fields[1].kind, "concealed");
         assert_eq!(fields[2].label, "expiry date");
+        assert_eq!(
+            serde_json::to_value(&fields[0]).expect("serializable summary"),
+            serde_json::json!({
+                "selector": "username",
+                "label": "username",
+                "type": "string"
+            })
+        );
     }
 
     #[test]
@@ -306,5 +334,66 @@ mod tests {
             "secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=8&period=30"
         );
         assert_eq!(totp_at(uri, 59).as_deref(), Some("94287082"));
+    }
+
+    #[test]
+    fn uses_the_same_selectors_for_listing_and_retrieval() {
+        let details = br#"{
+            "sections": [{
+                "fields": [
+                    {"n":"duplicate","t":"empty","k":"string"},
+                    {"n":"duplicate","t":"first","k":"string","v":"one"},
+                    {"n":"duplicate","t":"second","k":"string","v":"two"}
+                ]
+            }]
+        }"#;
+        let fields = list_fields(details).expect("valid item details");
+
+        assert_eq!(fields[0].selector, "duplicate");
+        assert_eq!(fields[1].selector, "duplicate-2");
+        assert_secret(details, "duplicate", b"one");
+        assert_secret(details, "duplicate-2", b"two");
+    }
+
+    #[test]
+    fn selectors_are_globally_unique() {
+        let details = br#"{
+            "sections": [{
+                "fields": [
+                    {"n":"foo","t":"first","k":"string","v":"one"},
+                    {"n":"foo-2","t":"second","k":"string","v":"two"},
+                    {"n":"foo","t":"third","k":"string","v":"three"}
+                ]
+            }]
+        }"#;
+        let fields = list_fields(details).expect("valid item details");
+        let selectors = fields
+            .iter()
+            .map(|field| field.selector.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(selectors, ["foo", "foo-2", "foo-3"]);
+        assert_secret(details, "foo-3", b"three");
+    }
+
+    #[test]
+    fn labels_do_not_shadow_exact_selectors() {
+        let details = br#"{
+            "sections": [{
+                "fields": [
+                    {"n":"username","t":"password","k":"string","v":"wrong"},
+                    {"n":"password","t":"password","k":"concealed","v":"right"}
+                ]
+            }]
+        }"#;
+
+        assert_secret(details, "password", b"right");
+    }
+
+    fn assert_secret(details: &[u8], selector: &str, expected: &[u8]) {
+        let value = get_field(details, selector).expect("existing field");
+        let mut output = Vec::new();
+        value.write_to(&mut output).expect("write value");
+        assert_eq!(output, expected);
     }
 }
