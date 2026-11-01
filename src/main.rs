@@ -9,13 +9,14 @@ use std::{
     env,
     io::{BufRead, BufReader, IsTerminal, Read, Write},
     os::unix::net::UnixStream,
-    process::{Command as ProcessCommand, Stdio},
     thread,
     time::Duration,
 };
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use serde::Serialize;
+use systemd_zbus::zbus::{blocking::Connection, zvariant::Value};
+use systemd_zbus::{ManagerProxyBlocking, Mode};
 use zeroize::Zeroizing;
 
 use crate::{
@@ -31,17 +32,8 @@ const DAEMON_READ_TIMEOUT: Duration = Duration::from_secs(20);
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
-    /// Format runtime errors for humans or automated callers.
-    #[arg(long, global = true, value_enum, default_value_t = ErrorFormat::Text)]
-    error_format: ErrorFormat,
     #[command(subcommand)]
     command: Command,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum ErrorFormat {
-    Text,
-    Json,
 }
 
 #[derive(Subcommand)]
@@ -71,9 +63,16 @@ enum Command {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) if error.use_stderr() => {
+            write_error("cli_usage", error.to_string());
+            std::process::exit(error.exit_code());
+        }
+        Err(error) => error.exit(),
+    };
     if let Err(error) = disable_core_dumps().and_then(|()| run(cli.command)) {
-        write_error(cli.error_format, &error);
+        write_error(error.code(), error.to_string());
         std::process::exit(error.exit_status());
     }
 }
@@ -169,7 +168,7 @@ fn connect() -> Result<UnixStream> {
         return Ok(stream);
     }
 
-    let _ = start_daemon();
+    let start_error = start_daemon().err();
     for _ in 0..100 {
         if let Ok(stream) = UnixStream::connect(&socket) {
             return Ok(stream);
@@ -177,36 +176,39 @@ fn connect() -> Result<UnixStream> {
         thread::sleep(Duration::from_millis(50));
     }
 
-    Err(Error::DaemonUnavailable)
+    match start_error {
+        Some(error) => Err(error),
+        None => Err(Error::DaemonUnavailable),
+    }
 }
 
 fn start_daemon() -> Result<()> {
-    let executable = env::current_exe()?;
-    let status = ProcessCommand::new("systemd-run")
-        .args([
-            "--user",
-            "--collect",
-            "--quiet",
-            "--unit=psst-daemon",
-            "--description=1Password handoff session daemon",
-            "--property=RuntimeMaxSec=1h",
-            "--property=LimitCORE=0",
-            "--property=NoNewPrivileges=yes",
-            "--property=PrivateTmp=yes",
-            "--property=UMask=0077",
-        ])
-        .arg(executable)
-        .arg("daemon")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(Error::DaemonUnavailable)
-    }
+    let executable = env::current_exe()?
+        .into_os_string()
+        .into_string()
+        .map_err(|_| std::io::Error::other("psst executable path is not valid UTF-8"))?;
+    let command = vec![(executable.clone(), vec![executable, "daemon".into()], false)];
+    let properties = vec![
+        (
+            "Description",
+            Value::from("1Password handoff session daemon"),
+        ),
+        ("ExecStart", Value::from(command)),
+        ("CollectMode", Value::from("inactive-or-failed")),
+        ("RuntimeMaxUSec", Value::from(3_600_000_000_u64)),
+        ("LimitCORE", Value::from(0_u64)),
+        ("LimitCORESoft", Value::from(0_u64)),
+        ("NoNewPrivileges", Value::from(true)),
+        ("PrivateTmp", Value::from(true)),
+        ("UMask", Value::from(0o077_u32)),
+        ("StandardInput", Value::from("null")),
+        ("StandardOutput", Value::from("null")),
+        ("StandardError", Value::from("null")),
+    ];
+    let connection = Connection::session()?;
+    let manager = ManagerProxyBlocking::new(&connection)?;
+    manager.start_transient_unit("psst-daemon.service", Mode::Fail, &properties, &[])?;
+    Ok(())
 }
 
 fn unexpected<T>(response: Response) -> Result<T> {
@@ -251,19 +253,12 @@ struct ErrorOutput<'a> {
     message: String,
 }
 
-fn write_error(format: ErrorFormat, error: &Error) {
-    match format {
-        ErrorFormat::Text => eprintln!("psst: {error}"),
-        ErrorFormat::Json => {
-            let output = ErrorOutput {
-                code: error.code(),
-                message: error.to_string(),
-            };
-            if serde_json::to_writer(std::io::stderr(), &output).is_ok() {
-                eprintln!();
-            }
-        }
-    }
+fn write_error(code: &str, message: String) {
+    let output = ErrorOutput { code, message };
+    let stderr = std::io::stderr();
+    let mut stderr = stderr.lock();
+    let _ = serde_json::to_writer(&mut stderr, &output);
+    let _ = stderr.write_all(b"\n");
 }
 
 #[cfg(test)]
@@ -286,5 +281,36 @@ mod tests {
             Err(Error::ShareFromTerminal)
         ));
         assert!(refuse_share_terminal(false).is_ok());
+    }
+
+    #[test]
+    fn serializes_runtime_and_usage_errors_as_json() {
+        let runtime = serde_json::to_value(ErrorOutput {
+            code: Error::SecretToTerminal.code(),
+            message: Error::SecretToTerminal.to_string(),
+        })
+        .expect("serializable runtime error");
+        assert_eq!(
+            runtime,
+            serde_json::json!({
+                "code": "secret_to_terminal",
+                "message": "refusing to write a secret to a terminal; pipe or redirect stdout"
+            })
+        );
+
+        let usage = match Cli::try_parse_from(["psst", "unknown"]) {
+            Ok(_) => panic!("unknown command was accepted"),
+            Err(error) => error,
+        };
+        assert!(usage.use_stderr());
+        assert_eq!(usage.exit_code(), 2);
+        assert!(
+            serde_json::to_string(&ErrorOutput {
+                code: "cli_usage",
+                message: usage.to_string(),
+            })
+            .expect("serializable usage error")
+            .starts_with(r#"{"code":"cli_usage","message":"#)
+        );
     }
 }

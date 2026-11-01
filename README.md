@@ -2,14 +2,14 @@
 
 [![lint](https://github.com/evanpurkhiser/psst/actions/workflows/lint.yml/badge.svg)](https://github.com/evanpurkhiser/psst/actions/workflows/lint.yml)
 
-`psst`—Private Short-lived Secret Transfer—is a 1Password handoff tool for
+`psst` (Private Short-lived Secret Transfer) is a 1Password handoff tool for
 coding agents and other local automation. A human provides a public 1Password
 item-sharing link; the agent can inspect its field names and types, then
 explicitly retrieve only the values it needs.
 
 ## Install
 
-`psst` requires Linux with a systemd user session.
+`psst` requires Linux with a systemd user manager and session D-Bus.
 
 ```console
 $ cargo install --locked --git https://github.com/evanpurkhiser/psst
@@ -73,12 +73,14 @@ Prefer a direct pipe to the consuming process. A terminal check cannot
 distinguish an intended consumer from a process that captures piped output, and
 a redirected file uses the caller's permissions and umask.
 
-Runtime errors go to stderr. Agents can request a stable error code and message
-as JSON:
+Errors go to stderr as JSON with a stable code and human-readable message. This
+includes command-line usage errors and safety refusals:
 
 ```console
-$ psst --error-format json fields expired-session
+$ psst fields expired-session
 {"code":"session_not_found","message":"session \"expired-session\" was not found or has expired"}
+$ psst get expired-session password
+{"code":"secret_to_terminal","message":"refusing to write a secret to a terminal; pipe or redirect stdout"}
 ```
 
 Exit statuses group failures by action: `10` for input, `11` for share access,
@@ -87,11 +89,12 @@ for sessions, and `30` for local runtime failures.
 
 ## Session and security model
 
-The first command uses `systemd-run --user` to start a hardened transient
-`psst-daemon` service. The CLI communicates with it through a mode-0600 Unix
-socket in `$XDG_RUNTIME_DIR`. Sessions use opaque random identifiers, expire
-five minutes after `open`, and can be destroyed earlier with `close`. The daemon
-exits after five idle minutes and has a one-hour systemd runtime limit.
+The first command asks the systemd user manager over D-Bus to start a hardened
+transient `psst-daemon` service. The CLI communicates with it through a mode-0600
+Unix socket in `$XDG_RUNTIME_DIR`. Sessions use opaque random identifiers,
+expire five minutes after `open`, and can be destroyed earlier with `close`.
+The daemon exits after five idle minutes and has a one-hour systemd runtime
+limit.
 
 The daemon retains the encrypted item and its derived AES key. It decrypts item
 details only while servicing `fields` or `get`; sensitive buffers managed by

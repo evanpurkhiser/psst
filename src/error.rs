@@ -44,6 +44,8 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Systemd(#[from] systemd_zbus::zbus::Error),
 }
 
 impl Error {
@@ -68,6 +70,7 @@ impl Error {
             Self::Http(_) => "network_error",
             Self::Io(_) => "io_error",
             Self::Json(_) => "invalid_json",
+            Self::Systemd(_) => "systemd_error",
         }
     }
 
