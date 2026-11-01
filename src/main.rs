@@ -14,7 +14,6 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use serde::Serialize;
 use systemd_zbus::zbus::{blocking::Connection, zvariant::Value};
 use systemd_zbus::{ManagerProxyBlocking, Mode};
 use zeroize::Zeroizing;
@@ -66,13 +65,15 @@ fn main() {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) if error.use_stderr() => {
-            write_error("cli_usage", error.to_string());
+            let message = error.to_string();
+            let message = message.strip_prefix("error: ").unwrap_or(&message);
+            write_error("cli_usage", message);
             std::process::exit(error.exit_code());
         }
         Err(error) => error.exit(),
     };
     if let Err(error) = disable_core_dumps().and_then(|()| run(cli.command)) {
-        write_error(error.code(), error.to_string());
+        write_error(error.code(), &error.to_string());
         std::process::exit(error.exit_status());
     }
 }
@@ -247,18 +248,10 @@ fn disable_core_dumps() -> Result<()> {
     Err(std::io::Error::last_os_error().into())
 }
 
-#[derive(Serialize)]
-struct ErrorOutput<'a> {
-    code: &'a str,
-    message: String,
-}
-
-fn write_error(code: &str, message: String) {
-    let output = ErrorOutput { code, message };
+fn write_error(code: &str, message: &str) {
     let stderr = std::io::stderr();
     let mut stderr = stderr.lock();
-    let _ = serde_json::to_writer(&mut stderr, &output);
-    let _ = stderr.write_all(b"\n");
+    let _ = writeln!(stderr, "error {code}: {message}");
 }
 
 #[cfg(test)]
@@ -284,18 +277,14 @@ mod tests {
     }
 
     #[test]
-    fn serializes_runtime_and_usage_errors_as_json() {
-        let runtime = serde_json::to_value(ErrorOutput {
-            code: Error::SecretToTerminal.code(),
-            message: Error::SecretToTerminal.to_string(),
-        })
-        .expect("serializable runtime error");
+    fn runtime_and_usage_errors_have_stable_codes() {
         assert_eq!(
-            runtime,
-            serde_json::json!({
-                "code": "secret_to_terminal",
-                "message": "refusing to write a secret to a terminal; pipe or redirect stdout"
-            })
+            format!(
+                "error {}: {}",
+                Error::SecretToTerminal.code(),
+                Error::SecretToTerminal
+            ),
+            "error secret_to_terminal: refusing to write a secret to a terminal; pipe or redirect stdout"
         );
 
         let usage = match Cli::try_parse_from(["psst", "unknown"]) {
@@ -304,13 +293,11 @@ mod tests {
         };
         assert!(usage.use_stderr());
         assert_eq!(usage.exit_code(), 2);
+        let message = usage.to_string();
+        let message = message.strip_prefix("error: ").unwrap_or(&message);
         assert!(
-            serde_json::to_string(&ErrorOutput {
-                code: "cli_usage",
-                message: usage.to_string(),
-            })
-            .expect("serializable usage error")
-            .starts_with(r#"{"code":"cli_usage","message":"#)
+            format!("error cli_usage: {message}")
+                .starts_with("error cli_usage: unrecognized subcommand")
         );
     }
 }

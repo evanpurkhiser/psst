@@ -45,8 +45,12 @@ $ trap - EXIT
 Agents should call `fields` first, use an exact returned `selector`, retrieve
 only required values, and close the session as soon as the consumer finishes.
 The `--` before a selector keeps names beginning with `-` from becoming options.
-A view-once share is consumed by `open`; losing its session ID or allowing the
-session to expire may make the item unrecoverable.
+Prefer a view-once share. `open` consumes it once, then the daemon serves the
+session from memory for up to five minutes. Losing the session ID or allowing
+the session to expire may make the item unrecoverable; use a short-lived
+multi-view share when retrieval must be retryable. `close` destroys only the
+local session. Revoke an active multi-view link from the item's Sharing History
+in 1Password.
 
 `fields` returns an ordered JSON array containing `selector`, `label`, and
 `type`. Selectors are unique and stable for the session; duplicate names receive
@@ -66,21 +70,21 @@ private. `open` refuses terminal input.
 `get` refuses terminal output before asking the daemon to decrypt a value:
 
 ```text
-psst: refusing to write a secret to a terminal; pipe or redirect stdout
+error secret_to_terminal: refusing to write a secret to a terminal; pipe or redirect stdout
 ```
 
 Prefer a direct pipe to the consuming process. A terminal check cannot
 distinguish an intended consumer from a process that captures piped output, and
 a redirected file uses the caller's permissions and umask.
 
-Errors go to stderr as JSON with a stable code and human-readable message. This
-includes command-line usage errors and safety refusals:
+Errors go to stderr with a stable code and human-readable message. This includes
+command-line usage errors and safety refusals:
 
 ```console
 $ psst fields expired-session
-{"code":"session_not_found","message":"session \"expired-session\" was not found or has expired"}
+error session_not_found: session "expired-session" was not found or has expired
 $ psst get expired-session password
-{"code":"secret_to_terminal","message":"refusing to write a secret to a terminal; pipe or redirect stdout"}
+error secret_to_terminal: refusing to write a secret to a terminal; pipe or redirect stdout
 ```
 
 Exit statuses group failures by action: `10` for input, `11` for share access,
