@@ -1,17 +1,22 @@
 mod attachment;
+mod browser;
 mod client;
 mod crypto;
 mod daemon;
 mod error;
 mod item;
+mod passkey_authorization;
+mod plugin;
 mod protocol;
+mod skill;
+mod webauthn;
 
 use std::{
     env,
     io::{BufRead, BufReader, IsTerminal, Read, Write},
     os::unix::net::UnixStream,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use clap::{Parser, Subcommand};
@@ -25,9 +30,12 @@ use crate::{
 };
 
 const MAX_SHARE_LINK_BYTES: usize = 4 * 1024;
+const MAX_JSON_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_DAEMON_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const DAEMON_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const DAEMON_READ_TIMEOUT: Duration = Duration::from_secs(20);
+const PASSKEY_HANDOFF_TIMEOUT: Duration = Duration::from_secs(60);
+const PASSKEY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -61,16 +69,78 @@ enum Command {
         #[arg(allow_hyphen_values = true)]
         field: String,
     },
+    /// Inspect or use a passkey without exporting its private key.
+    Passkey {
+        #[command(subcommand)]
+        command: PasskeyCommand,
+    },
+    /// Install the Chrome passkey extension and native messaging host.
+    Browser {
+        #[command(subcommand)]
+        command: BrowserCommand,
+    },
+    /// Print the version-matched usage skill for agents and automation.
+    Skill,
     /// Destroy a session immediately.
     Close {
         /// Opaque identifier returned by `psst open`.
         session: String,
     },
+    /// Serve the Agent Browser plugin protocol over standard input and output.
+    #[command(hide = true)]
+    AgentBrowserPlugin,
     #[command(hide = true)]
     Daemon,
 }
 
+#[derive(Subcommand)]
+enum PasskeyCommand {
+    /// Write the passkey's relying-party and credential identifiers as JSON.
+    Describe {
+        /// Opaque identifier returned by `psst open`.
+        session: String,
+    },
+    /// Read a WebAuthn request from stdin and write a signed assertion as JSON.
+    Assert {
+        /// Opaque identifier returned by `psst open`.
+        session: String,
+    },
+    /// Authorize one browser passkey request for up to one minute.
+    Handoff {
+        /// Opaque identifier returned by `psst open`.
+        session: String,
+        /// Identifier displayed by the psst browser prompt.
+        request_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum BrowserCommand {
+    /// Install or refresh the bundled Chrome integration.
+    Install {
+        /// Host UID permitted to use the container browser bridge.
+        #[arg(long = "peer-uid", value_name = "UID")]
+        allowed_peer_uids: Vec<u32>,
+    },
+    /// Report installed browser paths and container peer authorization.
+    Status,
+    /// Clear all container browser peer authorization.
+    Reset,
+}
+
 fn main() {
+    if env::args()
+        .nth(1)
+        .as_deref()
+        .is_some_and(browser::is_extension_origin)
+    {
+        if let Err(error) = disable_core_dumps().and_then(|()| run_native_host()) {
+            write_error(error.code(), &error.to_string());
+            std::process::exit(error.exit_status());
+        }
+        return;
+    }
+
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) if error.use_stderr() => {
@@ -90,6 +160,7 @@ fn main() {
 fn run(command: Command) -> Result<()> {
     match command {
         Command::Daemon => daemon::run(),
+        Command::AgentBrowserPlugin => run_agent_browser_plugin(),
         Command::Open => {
             let stdin = std::io::stdin();
             refuse_share_terminal(stdin.is_terminal())?;
@@ -147,10 +218,176 @@ fn run(command: Command) -> Result<()> {
             refuse_terminal(stdout.is_terminal())?;
             request_attachment(Request::Download { session, field }, &mut stdout)
         }
+        Command::Passkey { command } => run_passkey(command),
+        Command::Browser { command } => run_browser(command),
+        Command::Skill => skill::write(std::io::stdout().lock()),
         Command::Close { session } => match request(Request::Close { session })? {
             Response::Closed => Ok(()),
             response => unexpected(response),
         },
+    }
+}
+
+fn run_passkey(command: PasskeyCommand) -> Result<()> {
+    match command {
+        PasskeyCommand::Describe { session } => {
+            match request(Request::PasskeyDescribe { session })? {
+                Response::PasskeyCredential { credential } => {
+                    let stdout = std::io::stdout();
+                    let mut stdout = stdout.lock();
+                    serde_json::to_writer_pretty(&mut stdout, &credential)?;
+                    writeln!(stdout)?;
+                    Ok(())
+                }
+                response => unexpected(response),
+            }
+        }
+        PasskeyCommand::Assert { session } => {
+            let mut input = Zeroizing::new(Vec::new());
+            std::io::stdin()
+                .take(MAX_JSON_REQUEST_BYTES as u64 + 1)
+                .read_to_end(&mut input)?;
+            if input.len() > MAX_JSON_REQUEST_BYTES {
+                return Err(Error::InputSizeLimit("passkey assertion request"));
+            }
+            let assertion_request = serde_json::from_slice(&input)?;
+
+            match request(Request::PasskeyAssert {
+                session,
+                request: assertion_request,
+            })? {
+                Response::PasskeyAssertion { assertion } => {
+                    let stdout = std::io::stdout();
+                    let mut stdout = stdout.lock();
+                    serde_json::to_writer(&mut stdout, &assertion)?;
+                    writeln!(stdout)?;
+                    Ok(())
+                }
+                response => unexpected(response),
+            }
+        }
+        PasskeyCommand::Handoff {
+            session,
+            request_id,
+        } => match request(Request::PasskeyHandoff {
+            session,
+            request_id,
+        })? {
+            Response::PasskeyHandoffReady => Ok(()),
+            response => unexpected(response),
+        },
+    }
+}
+
+fn run_browser(command: BrowserCommand) -> Result<()> {
+    match command {
+        BrowserCommand::Install { allowed_peer_uids } => {
+            let peer_configuration = if allowed_peer_uids.is_empty() {
+                browser::PeerConfiguration::Preserve
+            } else {
+                browser::PeerConfiguration::Replace(&allowed_peer_uids)
+            };
+            let installation = browser::install(peer_configuration)?;
+            println!("{}", installation.extension.display());
+            Ok(())
+        }
+        BrowserCommand::Status => {
+            serde_json::to_writer_pretty(std::io::stdout().lock(), &browser::status()?)?;
+            println!();
+            Ok(())
+        }
+        BrowserCommand::Reset => browser::reset_peers(),
+    }
+}
+
+fn run_agent_browser_plugin() -> Result<()> {
+    let mut input = Zeroizing::new(Vec::new());
+    std::io::stdin()
+        .take(MAX_JSON_REQUEST_BYTES as u64 + 1)
+        .read_to_end(&mut input)?;
+    if input.len() > MAX_JSON_REQUEST_BYTES {
+        return Err(Error::InputSizeLimit("plugin request"));
+    }
+
+    let response = match plugin::parse(&input) {
+        Ok(plugin::Action::Manifest) => plugin::manifest_response(),
+        Ok(plugin::Action::Launch) => {
+            match browser::install(browser::PeerConfiguration::Preserve) {
+                Ok(installation) => plugin::launch_response(&installation.extension),
+                Err(error) => plugin::error_response(&error),
+            }
+        }
+        Err(error) => plugin::error_response(&error),
+    };
+
+    serde_json::to_writer(std::io::stdout().lock(), &response)?;
+    Ok(())
+}
+
+fn run_native_host() -> Result<()> {
+    let mut length = [0_u8; 4];
+    std::io::stdin().read_exact(&mut length)?;
+    let length = u32::from_ne_bytes(length) as usize;
+    if length > MAX_JSON_REQUEST_BYTES {
+        return Err(Error::InputSizeLimit("native messaging request"));
+    }
+
+    let mut input = Zeroizing::new(vec![0_u8; length]);
+    std::io::stdin().read_exact(&mut input)?;
+    let response = match serde_json::from_slice(&input) {
+        Ok(assertion_request) => wait_for_browser_assertion(assertion_request)?,
+        Err(error) => serde_json::json!({
+            "success": false,
+            "code": "invalid_json",
+            "error": error.to_string(),
+        }),
+    };
+    let encoded = Zeroizing::new(serde_json::to_vec(&response)?);
+    let length = u32::try_from(encoded.len())
+        .map_err(|_| Error::ResponseSizeLimit("native messaging response"))?;
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(&length.to_ne_bytes())?;
+    stdout.write_all(&encoded)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+fn wait_for_browser_assertion(
+    assertion_request: webauthn::AssertionRequest,
+) -> Result<serde_json::Value> {
+    let deadline = Instant::now() + PASSKEY_HANDOFF_TIMEOUT;
+    loop {
+        match request(Request::PasskeyBrowserAssert {
+            request: assertion_request.clone(),
+        }) {
+            Ok(Response::PasskeyAssertion { assertion }) => {
+                return Ok(serde_json::json!({
+                    "success": true,
+                    "assertion": assertion,
+                }));
+            }
+            Ok(response) => return unexpected(response),
+            Err(Error::Remote { code, message }) if code == "passkey_handoff_required" => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining <= PASSKEY_POLL_INTERVAL {
+                    thread::sleep(remaining);
+                    return Ok(serde_json::json!({
+                        "success": false,
+                        "code": code,
+                        "error": message,
+                    }));
+                }
+
+                thread::sleep(PASSKEY_POLL_INTERVAL);
+            }
+            Err(error) => {
+                return Ok(serde_json::json!({
+                    "success": false,
+                    "code": error.code(),
+                    "error": error.to_string(),
+                }));
+            }
+        }
     }
 }
 

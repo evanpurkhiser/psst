@@ -16,12 +16,16 @@ use rand::RngCore;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    attachment,
+    attachment, browser,
     client::{self, EncryptedItem},
     crypto::{self, EncryptedContainer},
     error::{Error, Result},
     item,
+    passkey_authorization::{
+        AuthorizationError, AuthorizationOutcome, HandoffError, PasskeyAuthorization,
+    },
     protocol::{Request, Response},
+    webauthn::AssertionRequest,
 };
 
 const SESSION_TTL: Duration = Duration::from_secs(300);
@@ -36,6 +40,21 @@ struct Session {
     share_uuid: String,
     file_download: Option<client::FileDownload>,
     expires_at: Instant,
+}
+
+#[derive(Default)]
+struct State {
+    sessions: HashMap<String, Session>,
+    passkey_authorization: PasskeyAuthorization,
+}
+
+impl State {
+    fn expire(&mut self) {
+        let now = Instant::now();
+        self.sessions.retain(|_, session| session.expires_at > now);
+        self.passkey_authorization
+            .expire(now, |session| self.sessions.contains_key(session));
+    }
 }
 
 impl Session {
@@ -53,6 +72,10 @@ impl Session {
     fn decrypt_details(&self) -> Result<Zeroizing<Vec<u8>>> {
         crypto::decrypt(&self.details, &self.key)
     }
+
+    fn decrypt_overview(&self) -> Result<Zeroizing<Vec<u8>>> {
+        crypto::decrypt(&self.overview, &self.key)
+    }
 }
 
 impl Drop for Session {
@@ -69,30 +92,63 @@ pub fn run() -> Result<()> {
     let listener = UnixListener::bind(&socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
+    let (browser_listener, browser_socket_path) = browser_bridge()?;
 
-    let mut sessions = HashMap::<String, Session>::new();
+    let mut state = State::default();
     let mut idle_since = Instant::now();
 
     loop {
-        sessions.retain(|_, session| session.expires_at > Instant::now());
-        if sessions.is_empty() && idle_since.elapsed() >= SESSION_TTL {
+        state.expire();
+        if state.sessions.is_empty() && idle_since.elapsed() >= SESSION_TTL {
             break;
         }
 
         match listener.accept() {
             Ok((mut stream, _)) => {
                 idle_since = Instant::now();
-                handle_connection(&mut stream, &mut sessions);
+                handle_connection(&mut stream, &mut state);
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(POLL_INTERVAL);
             }
             Err(error) => return Err(error.into()),
         }
+
+        match browser_listener.accept() {
+            Ok((mut stream, _)) => {
+                idle_since = Instant::now();
+                handle_browser_connection(&mut stream, &mut state);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error.into()),
+        }
     }
 
     fs::remove_file(socket_path)?;
+    fs::remove_file(browser_socket_path)?;
     Ok(())
+}
+
+fn browser_bridge() -> Result<(UnixListener, PathBuf)> {
+    let socket_path = browser::socket_path()?;
+    let directory = socket_path.parent().ok_or(Error::BrowserInstallPath)?;
+    match fs::create_dir(directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    let metadata = fs::symlink_metadata(directory)?;
+    if !metadata.file_type().is_dir() || metadata.uid() != effective_uid() {
+        return Err(Error::UnsafeRuntimeDirectory);
+    }
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o711))?;
+    remove_stale_socket(&socket_path)?;
+
+    let listener = UnixListener::bind(&socket_path)?;
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))?;
+    listener.set_nonblocking(true)?;
+
+    Ok((listener, socket_path))
 }
 
 pub fn socket_path() -> Result<PathBuf> {
@@ -129,14 +185,14 @@ fn effective_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-fn handle_connection(stream: &mut UnixStream, sessions: &mut HashMap<String, Session>) {
+fn handle_connection(stream: &mut UnixStream, state: &mut State) {
     if stream.set_read_timeout(Some(IO_TIMEOUT)).is_err()
         || stream.set_write_timeout(Some(IO_TIMEOUT)).is_err()
     {
         return;
     }
 
-    let reply = read_request(stream).and_then(|request| handle(request, sessions));
+    let reply = read_request(stream).and_then(|request| handle(request, state));
     let (response, body) = match reply {
         Ok(reply) => reply,
         Err(error) => (
@@ -159,6 +215,84 @@ fn handle_connection(stream: &mut UnixStream, sessions: &mut HashMap<String, Ses
     }
 }
 
+fn handle_browser_connection(stream: &mut UnixStream, state: &mut State) {
+    if stream.set_read_timeout(Some(IO_TIMEOUT)).is_err()
+        || stream.set_write_timeout(Some(IO_TIMEOUT)).is_err()
+    {
+        return;
+    }
+
+    let reply = peer_uid(stream)
+        .and_then(|uid| {
+            browser::config()?
+                .allowed_peer_uids
+                .contains(&uid)
+                .then_some(())
+                .ok_or(Error::BrowserPeer(uid))
+        })
+        .and_then(|()| read_browser_request(stream))
+        .and_then(|request| handle(Request::PasskeyBrowserAssert { request }, state));
+    let response = match reply {
+        Ok((Response::PasskeyAssertion { assertion }, None)) => serde_json::json!({
+            "success": true,
+            "assertion": assertion,
+        }),
+        Ok(_) => serde_json::json!({
+            "success": false,
+            "code": "browser_response_invalid",
+            "error": "the daemon returned an unexpected browser response",
+        }),
+        Err(error) => serde_json::json!({
+            "success": false,
+            "code": error.code(),
+            "error": error.to_string(),
+        }),
+    };
+    let Ok(mut encoded) = serde_json::to_vec(&response).map(Zeroizing::new) else {
+        return;
+    };
+    encoded.push(b'\n');
+    let _ = stream.write_all(&encoded);
+}
+
+fn read_browser_request(stream: &UnixStream) -> Result<AssertionRequest> {
+    let mut line = Zeroizing::new(Vec::new());
+    BufReader::new(stream)
+        .take(MAX_REQUEST_BYTES as u64 + 1)
+        .read_until(b'\n', &mut line)?;
+    if line.len() > MAX_REQUEST_BYTES {
+        return Err(Error::InputSizeLimit("browser assertion request"));
+    }
+
+    Ok(serde_json::from_slice(&line)?)
+}
+
+fn peer_uid(stream: &UnixStream) -> Result<u32> {
+    use std::os::fd::AsRawFd;
+
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // getsockopt writes a ucred value into the provided initialized storage.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&raw mut credentials).cast(),
+            &raw mut length,
+        )
+    };
+    if result == -1 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+
+    Ok(credentials.uid)
+}
+
 fn read_request(stream: &UnixStream) -> Result<Request> {
     let mut line = Zeroizing::new(Vec::new());
     BufReader::new(stream)
@@ -171,23 +305,20 @@ fn read_request(stream: &UnixStream) -> Result<Request> {
     Ok(serde_json::from_slice(&line)?)
 }
 
-fn handle(
-    request: Request,
-    sessions: &mut HashMap<String, Session>,
-) -> Result<(Response, Option<Zeroizing<Vec<u8>>>)> {
+fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroizing<Vec<u8>>>)> {
     match request {
         Request::Open { ref url } => {
             let keys = crypto::keys_from_link(url)?;
             let item = client::fetch(&keys)?;
             let id = session_id();
-            sessions.insert(
+            state.sessions.insert(
                 id.clone(),
                 Session::new(keys.encryption_key, keys.uuid, item),
             );
             Ok((Response::Opened { session: id }, None))
         }
         Request::Fields { ref session } => {
-            let session = active_session(sessions, session)?;
+            let session = active_session(&state.sessions, session)?;
             let details = session.decrypt_details()?;
             Ok((
                 Response::Fields {
@@ -200,7 +331,7 @@ fn handle(
             ref session,
             ref field,
         } => {
-            let session = active_session(sessions, session)?;
+            let session = active_session(&state.sessions, session)?;
             let details = session.decrypt_details()?;
             Ok((
                 Response::Secret {
@@ -213,7 +344,7 @@ fn handle(
             ref session,
             ref field,
         } => {
-            let session = active_session(sessions, session)?;
+            let session = active_session(&state.sessions, session)?;
             let details = session.decrypt_details()?;
             let attachment = item::get_attachment(&details, field)?;
             let download = session
@@ -225,10 +356,81 @@ fn handle(
             let size = plaintext.len() as u64;
             Ok((Response::Attachment { size }, Some(plaintext)))
         }
+        Request::PasskeyDescribe { ref session } => {
+            let session = active_session(&state.sessions, session)?;
+            let overview = session.decrypt_overview()?;
+            let details = session.decrypt_details()?;
+            let passkey = crate::webauthn::Passkey::from_item(&overview, &details)?;
+            Ok((
+                Response::PasskeyCredential {
+                    credential: passkey.describe(),
+                },
+                None,
+            ))
+        }
+        Request::PasskeyAssert {
+            ref session,
+            ref request,
+        } => {
+            let session = active_session(&state.sessions, session)?;
+            let overview = session.decrypt_overview()?;
+            let details = session.decrypt_details()?;
+            let passkey = crate::webauthn::Passkey::from_item(&overview, &details)?;
+            Ok((
+                Response::PasskeyAssertion {
+                    assertion: passkey.assert(request)?,
+                },
+                None,
+            ))
+        }
+        Request::PasskeyHandoff {
+            ref session,
+            ref request_id,
+        } => {
+            active_session(&state.sessions, session)?;
+            match state
+                .passkey_authorization
+                .handoff(session, request_id, Instant::now())
+            {
+                Ok(()) => {}
+                Err(HandoffError::Busy) => return Err(Error::PasskeyHandoffBusy),
+                Err(HandoffError::InvalidRequestId) => {
+                    return Err(Error::WebAuthnRequest(
+                        "invalid passkey request identifier".into(),
+                    ));
+                }
+            }
+            Ok((Response::PasskeyHandoffReady, None))
+        }
+        Request::PasskeyBrowserAssert { ref request } => {
+            let outcome = state
+                .passkey_authorization
+                .authorize(request.request_id.as_deref(), Instant::now())
+                .map_err(|error| match error {
+                    AuthorizationError::InvalidRequestId => {
+                        Error::WebAuthnRequest("invalid passkey request identifier".into())
+                    }
+                })?;
+            let AuthorizationOutcome::Authorized(session_id) = outcome else {
+                return Err(Error::PasskeyHandoffRequired);
+            };
+            let session = active_session(&state.sessions, session_id.as_str())?;
+            let overview = session.decrypt_overview()?;
+            let details = session.decrypt_details()?;
+            let passkey = crate::webauthn::Passkey::from_item(&overview, &details)?;
+            Ok((
+                Response::PasskeyAssertion {
+                    assertion: passkey.assert(request)?,
+                },
+                None,
+            ))
+        }
         Request::Close { ref session } => {
-            sessions
+            state
+                .sessions
                 .remove(session)
                 .ok_or_else(|| Error::SessionNotFound(session.clone()))?;
+            state.passkey_authorization.remove_session(session);
             Ok((Response::Closed, None))
         }
     }
@@ -245,4 +447,22 @@ fn session_id() -> String {
     let mut bytes = [0; 10];
     rand::rng().fill_bytes(&mut bytes);
     BASE32_NOPAD.encode(&bytes).to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handoff_requires_an_active_session() {
+        let result = handle(
+            Request::PasskeyHandoff {
+                session: "missing".into(),
+                request_id: "410e26bd-7701-4481-8b7e-9f4215edbd8d".into(),
+            },
+            &mut State::default(),
+        );
+
+        assert!(matches!(result, Err(Error::SessionNotFound(_))));
+    }
 }

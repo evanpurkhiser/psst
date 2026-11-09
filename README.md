@@ -17,6 +17,13 @@ $ cargo install --locked --git https://github.com/evanpurkhiser/psst
 
 ## Agent workflow
 
+Print the version-matched operational skill before integrating psst into an
+agent or automation workflow:
+
+```console
+$ psst skill
+```
+
 Pass the share link on standard input, retain the returned session ID, and
 arrange cleanup immediately:
 
@@ -76,6 +83,87 @@ fields return `MM/YYYY`. File values are available only through `download`,
 which verifies and decrypts the attachment before writing its original bytes.
 Attachments are currently limited to 64 MiB.
 
+## Passkeys
+
+psst can complete a browser passkey request without exporting its private key.
+The daemon decrypts and uses the key only while producing the requested
+WebAuthn assertion.
+
+### Browser setup
+
+Install the bundled Manifest V3 extension and Chrome native-messaging host:
+
+```console
+$ psst browser install
+/home/you/.local/share/psst/chrome-extension
+```
+
+For Chrome used directly or through an existing CDP connection, open
+`chrome://extensions`, enable Developer mode, choose **Load unpacked**, and
+select the printed directory. Chrome and psst must run on the same machine.
+For Chrome in a container, use the assertion-only bridge described in
+[Container browsers](docs/container-browsers.md).
+
+Agent Browser can load the extension automatically for locally launched Chrome
+sessions. Register psst as a launch-mutator plugin in
+`~/.agent-browser/config.json`:
+
+```json
+{
+  "plugins": [
+    {
+      "name": "psst",
+      "command": "/home/you/.cargo/bin/psst",
+      "args": ["agent-browser-plugin"],
+      "capabilities": ["launch.mutate"]
+    }
+  ]
+}
+```
+
+`psst agent-browser-plugin` then returns only the installed extension path using
+Agent Browser's existing `launch.mutate` protocol. It receives no credential,
+session reference, or WebAuthn request.
+
+Open the 1Password share and trigger the site's passkey action. The extension
+shows **Use psst** and **Continue with browser**. Choose **Use psst**, then pass
+the displayed request identifier to `handoff`:
+
+```console
+$ printf '%s' "$ONEPASSWORD_SHARE_URL" | psst open
+OPAQUE_SESSION_REFERENCE
+$ agent-browser --session work open https://login.example.com
+# Complete the site's identifier steps and trigger its passkey action.
+# Click "Use psst" in the browser prompt and read its request identifier.
+$ psst passkey handoff OPAQUE_SESSION_REFERENCE REQUEST_ID
+# The existing browser request completes without a retry.
+$ psst close OPAQUE_SESSION_REFERENCE
+```
+
+**Continue with browser** immediately passes the original request to Chrome.
+**Use psst** starts a handoff for that exact request; no native host or daemon
+request is created before that choice. A handoff authorizes its displayed
+identifier once and expires after one minute. Equivalent concurrent requests
+from the page share the same choice and assertion. A second distinct request
+fails while the first is awaiting a choice instead of opening an unexpected
+native prompt. The extension never receives the psst session reference or
+private key. Conditional mediation requests surface the same choice so an agent
+can request a passkey share before the user submits the login form. Silent
+mediation remains with Chrome because it cannot require user interaction.
+
+Use `psst browser status` to inspect the installed paths and container peer
+allowlist. `psst browser reset` clears the peer allowlist without removing the
+installed browser assets.
+
+### Low-level assertions
+
+`psst passkey describe` returns the credential's relying-party and credential
+identifiers. `psst passkey assert` accepts a JSON WebAuthn request on standard
+input and writes its assertion as JSON. These commands are intended for a
+non-browser WebAuthn consumer that already owns the request origin and
+challenge. The daemon rejects origins outside the stored relying party,
+mismatched relying-party IDs, and allow lists that exclude the credential.
+
 ## Output safety
 
 `open` accepts a share URL only on standard input, so `psst` never puts it in
@@ -117,7 +205,8 @@ The daemon exits after five idle minutes and has a one-hour systemd runtime
 limit.
 
 The daemon retains the encrypted item and its derived AES key. It decrypts item
-details only while servicing `fields` or `get`; sensitive buffers managed by
+details only while servicing a request that needs them. Passkey operations also
+decrypt the overview for relying-party metadata. Sensitive buffers managed by
 `psst` are zeroized where practical when dropped. Core dumps are disabled for
 the CLI and daemon. These measures shorten plaintext lifetime but do not defend
 against another process permitted to inspect the user's memory.

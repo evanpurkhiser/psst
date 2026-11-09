@@ -46,3 +46,49 @@ field. It then authenticates and decrypts the bytes and verifies the plaintext
 size. The daemon sends a JSON response header followed by the exact binary
 payload over its Unix socket, avoiding base64 expansion and preserving arbitrary
 file contents.
+
+## Passkey assertions
+
+1Password stores passkey metadata in the encrypted overview and its user handle
+and P-256 private key in the encrypted details. Shared items encode it as a hex
+scalar or a base64url-wrapped JSON Web Key; psst normalizes both inside the
+daemon.
+
+`passkey describe` returns only the relying-party ID, credential ID, and
+credential type. For `passkey assert`, the daemon validates the requested HTTPS
+origin against the stored relying-party ID, confirms the optional relying-party
+ID and credential allow list, and creates `clientDataJSON` and authenticator
+data. It signs the authenticator data and SHA-256 client-data hash with ES256 and
+returns a WebAuthn assertion. The assertion uses a zero signature counter, as
+the authenticator's indication that it does not support a coordinated signature
+counter.
+
+The private key exists only in the daemon's decrypted request buffers and P-256
+signing object. The daemon protocol has no response variant for private-key
+material and offers no arbitrary-byte signing operation.
+
+## Browser bridge
+
+The Chrome extension forwards the top-level page origin, challenge,
+relying-party ID, and credential allow list through Chrome native messaging
+after the user or browser driver chooses **Use psst**. **Continue with browser**
+passes the original call to Chrome without contacting psst. The extension
+generates a request identifier for the psst choice, and `passkey handoff`
+authorizes only that identifier for one minute. The matching assertion consumes
+the handoff even when WebAuthn validation fails. Equivalent concurrent calls
+from one page share a choice and assertion. A distinct concurrent call receives
+a busy error while the first request is awaiting a choice.
+
+Conditional mediation requests use this choice so browser drivers can request a
+shared passkey while the login form is active. Silent mediation stays native and
+never creates a psst prompt.
+
+The Agent Browser plugin implements its existing `launch.mutate` capability and
+returns the installed extension directory for local Chrome launches. It does
+not participate in assertion signing.
+
+Container browsers use a second Unix socket that accepts assertion requests
+only. The daemon verifies the connecting process UID against the configured
+peer list before reading a request. The main mode-0600 session socket remains
+outside the container. A small native-messaging proxy converts Chrome's framed
+standard-I/O messages to newline-delimited messages on the restricted socket.
