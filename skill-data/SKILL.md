@@ -1,11 +1,11 @@
 ---
 name: psst
-description: Use PSST to receive an explicitly shared 1Password item, consume selected secrets without printing them, or authenticate with a shared passkey whose private key stays inside the PSST daemon.
+description: Use psst to receive an explicitly shared 1Password item, consume selected secrets without printing them, or authenticate with a shared passkey whose private key stays inside the psst daemon.
 ---
 
-# PSST
+# psst
 
-PSST turns a public 1Password item-sharing link into a short-lived local
+psst turns a public 1Password item-sharing link into a short-lived local
 session. The item remains encrypted in a hardened user daemon, and callers
 request only the fields or passkey operations they need.
 
@@ -45,8 +45,8 @@ explicitly requires a file. Retrieve only the fields required for the task.
 ## Authenticate with a passkey
 
 The browser integration must already be installed. Trigger the site's normal
-passkey action. The browser displays **Use PSST** and **Continue with browser**.
-Choose **Use PSST**, read the request identifier from its status, and hand off
+passkey action. The browser displays **Use psst** and **Continue with browser**.
+Choose **Use psst**, read the request identifier from its status, and hand off
 that exact request:
 
 ```bash
@@ -56,7 +56,7 @@ psst passkey handoff "$session" "$request_id"
 ```
 
 **Continue with browser** immediately uses Chrome's normal passkey flow. **Use
-PSST** creates a request identifier and starts waiting for the CLI handoff.
+psst** creates a request identifier and starts waiting for the CLI handoff.
 `psst passkey handoff` authorizes that identifier for one minute. The browser
 sends the live origin, challenge, relying-party ID, and credential allow list
 through Chrome native messaging only after the browser choice. The daemon
@@ -64,7 +64,7 @@ validates them and returns the WebAuthn assertion; neither the browser extension
 nor its caller receives the session identifier or private key.
 
 If the handoff fails, the browser keeps **Continue with browser** available and
-offers a new PSST request identifier for another attempt. Each handoff is
+offers a new psst request identifier for another attempt. Each handoff is
 one-shot, including when its request fails WebAuthn validation.
 
 `psst passkey assert` is the lower-level interface for a non-browser WebAuthn
@@ -81,6 +81,6 @@ psst browser status
 ```
 
 Container browsers require an allowed peer UID and the mounts documented with
-the installed PSST release. `psst browser reset` clears the container peer
+the installed psst release. `psst browser reset` clears the container peer
 allowlist. Setup changes are infrastructure work, separate from consuming a
 shared item.

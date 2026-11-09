@@ -6,19 +6,19 @@ let activeRequest;
 
 const failureMessage = response => {
   if (["native_host_unavailable", "browser_bridge_unavailable"].includes(response?.code)) {
-    return "PSST is not ready. Open a PSST session, then try again.";
+    return "psst is not ready. Open a psst session, then try again.";
   }
   if (response?.code === "browser_peer_unauthorized") {
     return (
-      "This browser is not authorized for PSST. " +
+      "This browser is not authorized for psst. " +
       "Inspect psst browser status and install its peer UID."
     );
   }
   if (response?.code === "passkey_handoff_required") {
-    return "The PSST handoff expired. Try PSST again or continue with browser.";
+    return "The psst handoff expired. Try psst again or continue with browser.";
   }
 
-  return response?.error || "The PSST handoff failed";
+  return response?.error || "The psst handoff failed";
 };
 
 const respond = (ids, response) => {
@@ -42,7 +42,7 @@ const usePsst = request => {
   const requestId = crypto.randomUUID();
   request.psst.disabled = true;
   request.browser.focus();
-  request.status.textContent = `PSST handoff ${requestId} is waiting. Run psst passkey handoff <session> ${requestId}`;
+  request.status.textContent = `psst handoff ${requestId} is waiting. Run psst passkey handoff <session> ${requestId}`;
 
   chrome.runtime
     .sendMessage({
@@ -59,15 +59,15 @@ const usePsst = request => {
       }
 
       request.psst.disabled = false;
-      request.psst.textContent = "Try PSST again";
+      request.psst.textContent = "Try psst again";
       request.status.textContent = failureMessage(response);
       request.psst.focus();
     })
     .catch(() => {
       if (activeRequest !== request || request.ids.size === 0) return;
       request.psst.disabled = false;
-      request.psst.textContent = "Try PSST again";
-      request.status.textContent = "The PSST browser integration is unavailable";
+      request.psst.textContent = "Try psst again";
+      request.status.textContent = "The psst browser integration is unavailable";
       request.psst.focus();
     });
 };
@@ -129,7 +129,7 @@ const showRequest = request => {
   actions.className = "actions";
   const psst = document.createElement("button");
   psst.type = "button";
-  psst.textContent = "Use PSST";
+  psst.textContent = "Use psst";
   const browser = document.createElement("button");
   browser.type = "button";
   browser.className = "secondary";

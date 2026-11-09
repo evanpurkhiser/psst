@@ -68,7 +68,7 @@
           return;
         }
         if (!response?.success) {
-          reject(new DOMException(response?.error || "PSST passkey signing failed", "NotAllowedError"));
+          reject(new DOMException(response?.error || "psst passkey signing failed", "NotAllowedError"));
           return;
         }
         resolve(credential(response.assertion));

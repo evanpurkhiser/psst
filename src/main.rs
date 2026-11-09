@@ -109,7 +109,7 @@ enum PasskeyCommand {
     Handoff {
         /// Opaque identifier returned by `psst open`.
         session: String,
-        /// Identifier displayed by the PSST browser prompt.
+        /// Identifier displayed by the psst browser prompt.
         request_id: String,
     },
 }

@@ -51,7 +51,7 @@ file contents.
 
 1Password stores passkey metadata in the encrypted overview and its user handle
 and P-256 private key in the encrypted details. Shared items encode it as a hex
-scalar or a base64url-wrapped JSON Web Key; PSST normalizes both inside the
+scalar or a base64url-wrapped JSON Web Key; psst normalizes both inside the
 daemon.
 
 `passkey describe` returns only the relying-party ID, credential ID, and
@@ -71,9 +71,9 @@ material and offers no arbitrary-byte signing operation.
 
 The Chrome extension forwards the top-level page origin, challenge,
 relying-party ID, and credential allow list through Chrome native messaging
-after the user or browser driver chooses **Use PSST**. **Continue with browser**
-passes the original call to Chrome without contacting PSST. The extension
-generates a request identifier for the PSST choice, and `passkey handoff`
+after the user or browser driver chooses **Use psst**. **Continue with browser**
+passes the original call to Chrome without contacting psst. The extension
+generates a request identifier for the psst choice, and `passkey handoff`
 authorizes only that identifier for one minute. The matching assertion consumes
 the handoff even when WebAuthn validation fails. Equivalent concurrent calls
 from one page share a choice and assertion. A distinct concurrent call receives

@@ -1,6 +1,6 @@
 # Container browsers
 
-Chrome native-messaging hosts run in the browser's container. PSST keeps its
+Chrome native-messaging hosts run in the browser's container. psst keeps its
 session daemon on the host and exposes a separate socket that accepts WebAuthn
 assertion requests only. The daemon checks the connecting process UID and never
 serves the normal session protocol on this socket.
@@ -31,7 +31,7 @@ Mount these host paths into the browser container:
 | `$XDG_RUNTIME_DIR/psst-browser` | `/run/psst` | read-only |
 
 Create `$XDG_RUNTIME_DIR/psst-browser` with mode 0711 before starting the
-container. The daemon creates `bridge.sock` there when a PSST command starts it.
+container. The daemon creates `bridge.sock` there when a psst command starts it.
 The socket is reachable through the explicit mount, while the mode-0700 parent
 runtime directory keeps it unavailable to other host users.
 

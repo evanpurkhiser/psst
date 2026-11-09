@@ -78,7 +78,7 @@ pub fn manifest_response() -> Value {
         "success": true,
         "manifest": {
             "name": "psst",
-            "description": "Load the PSST passkey extension in local Chrome sessions",
+            "description": "Load the psst passkey extension in local Chrome sessions",
             "capabilities": [CAPABILITY]
         }
     })

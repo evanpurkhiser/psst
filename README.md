@@ -17,7 +17,7 @@ $ cargo install --locked --git https://github.com/evanpurkhiser/psst
 
 ## Agent workflow
 
-Print the version-matched operational skill before integrating PSST into an
+Print the version-matched operational skill before integrating psst into an
 agent or automation workflow:
 
 ```console
@@ -85,7 +85,7 @@ Attachments are currently limited to 64 MiB.
 
 ## Passkeys
 
-PSST can complete a browser passkey request without exporting its private key.
+psst can complete a browser passkey request without exporting its private key.
 The daemon decrypts and uses the key only while producing the requested
 WebAuthn assertion.
 
@@ -100,12 +100,12 @@ $ psst browser install
 
 For Chrome used directly or through an existing CDP connection, open
 `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and
-select the printed directory. Chrome and PSST must run on the same machine.
+select the printed directory. Chrome and psst must run on the same machine.
 For Chrome in a container, use the assertion-only bridge described in
 [Container browsers](docs/container-browsers.md).
 
 Agent Browser can load the extension automatically for locally launched Chrome
-sessions. Register PSST as a launch-mutator plugin in
+sessions. Register psst as a launch-mutator plugin in
 `~/.agent-browser/config.json`:
 
 ```json
@@ -126,7 +126,7 @@ Agent Browser's existing `launch.mutate` protocol. It receives no credential,
 session reference, or WebAuthn request.
 
 Open the 1Password share and trigger the site's passkey action. The extension
-shows **Use PSST** and **Continue with browser**. Choose **Use PSST**, then pass
+shows **Use psst** and **Continue with browser**. Choose **Use psst**, then pass
 the displayed request identifier to `handoff`:
 
 ```console
@@ -134,7 +134,7 @@ $ session="$(printf '%s' "$ONEPASSWORD_SHARE_URL" | psst open)"
 $ trap 'psst close "$session" 2>/dev/null || true' EXIT
 $ agent-browser --session work open https://login.example.com
 # Complete the site's identifier steps and trigger its passkey action.
-# Click "Use PSST" in the browser prompt and read its request identifier.
+# Click "Use psst" in the browser prompt and read its request identifier.
 $ psst passkey handoff "$session" "$request_id"
 # The existing browser request completes without a retry.
 $ psst close "$session"
@@ -142,12 +142,12 @@ $ trap - EXIT
 ```
 
 **Continue with browser** immediately passes the original request to Chrome.
-**Use PSST** starts a handoff for that exact request; no native host or daemon
+**Use psst** starts a handoff for that exact request; no native host or daemon
 request is created before that choice. A handoff authorizes its displayed
 identifier once and expires after one minute. Equivalent concurrent requests
 from the page share the same choice and assertion. A second distinct request
 fails while the first is awaiting a choice instead of opening an unexpected
-native prompt. The extension never receives the PSST session reference or
+native prompt. The extension never receives the psst session reference or
 private key.
 
 Use `psst browser status` to inspect the installed paths and container peer

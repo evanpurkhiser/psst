@@ -26,7 +26,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (pendingAssertions.size >= MAX_PENDING_ASSERTIONS) {
-    sendResponse({ success: false, error: "Too many PSST passkey handoffs are active" });
+    sendResponse({ success: false, error: "Too many psst passkey handoffs are active" });
     return false;
   }
 
@@ -39,7 +39,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       response = {
         success: false,
         code: "native_host_unavailable",
-        error: "The PSST native host is unavailable",
+        error: "The psst native host is unavailable",
       };
     }
 

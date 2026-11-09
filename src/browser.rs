@@ -73,7 +73,7 @@ pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation
     let executable = env::current_exe()?.canonicalize()?;
     let native_manifest = serde_json::to_vec_pretty(&json!({
         "name": NATIVE_HOST,
-        "description": "PSST passkey native messaging host",
+        "description": "psst passkey native messaging host",
         "path": executable,
         "type": "stdio",
         "allowed_origins": [EXTENSION_ORIGIN],
@@ -84,7 +84,7 @@ pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation
 
     let container_manifest = serde_json::to_vec_pretty(&json!({
         "name": NATIVE_HOST,
-        "description": "PSST passkey native messaging host",
+        "description": "psst passkey native messaging host",
         "path": format!("{CONTAINER_ROOT}/native-host.py"),
         "type": "stdio",
         "allowed_origins": [EXTENSION_ORIGIN],

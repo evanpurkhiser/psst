@@ -48,7 +48,7 @@ def request_assertion_once(request):
                 break
 
     if len(response) > MAX_MESSAGE_BYTES:
-        raise ValueError("PSST browser response is too large")
+        raise ValueError("psst browser response is too large")
 
     return json.loads(response)
 

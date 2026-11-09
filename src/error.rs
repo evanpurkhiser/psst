@@ -30,7 +30,7 @@ pub enum Error {
     PasskeyKey,
     #[error("invalid WebAuthn request: {0}")]
     WebAuthnRequest(String),
-    #[error("the browser passkey request has not been handed off to PSST")]
+    #[error("the browser passkey request has not been handed off to psst")]
     PasskeyHandoffRequired,
     #[error("another browser passkey handoff is already active")]
     PasskeyHandoffBusy,
