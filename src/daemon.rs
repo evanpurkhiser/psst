@@ -21,13 +21,12 @@ use crate::{
     crypto::{self, EncryptedContainer},
     error::{Error, Result},
     item,
+    passkey_authorization::PasskeyAuthorization,
     protocol::{Request, Response},
     webauthn::AssertionRequest,
 };
 
 const SESSION_TTL: Duration = Duration::from_secs(300);
-const PASSKEY_ARM_TTL: Duration = Duration::from_secs(60);
-const PASSKEY_REQUEST_TTL: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
@@ -41,35 +40,18 @@ struct Session {
     expires_at: Instant,
 }
 
-struct ArmedPasskey {
-    session: Zeroizing<String>,
-    request_id: Option<String>,
-    expires_at: Instant,
-}
-
-struct PendingPasskeyRequest {
-    id: String,
-    expires_at: Instant,
-}
-
 #[derive(Default)]
 struct State {
     sessions: HashMap<String, Session>,
-    armed_passkey: Option<ArmedPasskey>,
-    pending_passkey_requests: Vec<PendingPasskeyRequest>,
+    passkey_authorization: PasskeyAuthorization,
 }
 
 impl State {
     fn expire(&mut self) {
         let now = Instant::now();
         self.sessions.retain(|_, session| session.expires_at > now);
-        if self.armed_passkey.as_ref().is_some_and(|armed| {
-            armed.expires_at <= now || !self.sessions.contains_key(armed.session.as_str())
-        }) {
-            self.armed_passkey = None;
-        }
-        self.pending_passkey_requests
-            .retain(|pending| pending.expires_at > now);
+        self.passkey_authorization
+            .expire(now, |session| self.sessions.contains_key(session));
     }
 }
 
@@ -413,48 +395,15 @@ fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroi
         }
         Request::PasskeyArm { ref session } => {
             active_session(&state.sessions, session)?;
-            state.armed_passkey = Some(ArmedPasskey {
-                session: Zeroizing::new(session.clone()),
-                request_id: state
-                    .pending_passkey_requests
-                    .last()
-                    .map(|pending| pending.id.clone()),
-                expires_at: Instant::now() + PASSKEY_ARM_TTL,
-            });
+            state.passkey_authorization.arm(session, Instant::now());
             Ok((Response::PasskeyArmed, None))
         }
         Request::PasskeyBrowserAssert { ref request } => {
-            let request_id = request
-                .request_id
-                .as_deref()
-                .filter(|id| !id.is_empty() && id.len() <= 128);
-            let matches_arm = state.armed_passkey.as_ref().is_some_and(|armed| {
-                armed.expires_at > Instant::now()
-                    && armed
-                        .request_id
-                        .as_deref()
-                        .is_none_or(|armed_id| Some(armed_id) == request_id)
-            });
-            if !matches_arm {
-                if let Some(id) = request_id
-                    && !state
-                        .pending_passkey_requests
-                        .iter()
-                        .any(|pending| pending.id == id)
-                {
-                    state.pending_passkey_requests.push(PendingPasskeyRequest {
-                        id: id.into(),
-                        expires_at: Instant::now() + PASSKEY_REQUEST_TTL,
-                    });
-                }
-                return Err(Error::PasskeyNotArmed);
-            }
-
-            let armed = state.armed_passkey.take().ok_or(Error::PasskeyNotArmed)?;
-            state
-                .pending_passkey_requests
-                .retain(|pending| Some(pending.id.as_str()) != request_id);
-            let session = active_session(&state.sessions, armed.session.as_str())?;
+            let session_id = state
+                .passkey_authorization
+                .authorize(request.request_id.as_deref(), Instant::now())
+                .ok_or(Error::PasskeyNotArmed)?;
+            let session = active_session(&state.sessions, session_id.as_str())?;
             let overview = session.decrypt_overview()?;
             let details = session.decrypt_details()?;
             let passkey = crate::webauthn::Passkey::from_item(&overview, &details)?;
@@ -470,13 +419,7 @@ fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroi
                 .sessions
                 .remove(session)
                 .ok_or_else(|| Error::SessionNotFound(session.clone()))?;
-            if state
-                .armed_passkey
-                .as_ref()
-                .is_some_and(|armed| armed.session.as_str() == session)
-            {
-                state.armed_passkey = None;
-            }
+            state.passkey_authorization.remove_session(session);
             Ok((Response::Closed, None))
         }
     }
@@ -498,47 +441,6 @@ fn session_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn assertion_request() -> crate::webauthn::AssertionRequest {
-        crate::webauthn::AssertionRequest {
-            request_id: Some("request-1".into()),
-            origin: "https://example.com".into(),
-            challenge: "Y2hhbGxlbmdl".into(),
-            rp_id: Some("example.com".into()),
-            allow_credentials: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn browser_assertions_require_an_armed_session() {
-        let mut state = State::default();
-        let result = handle(
-            Request::PasskeyBrowserAssert {
-                request: assertion_request(),
-            },
-            &mut state,
-        );
-
-        assert!(matches!(result, Err(Error::PasskeyNotArmed)));
-        assert_eq!(state.pending_passkey_requests[0].id, "request-1");
-    }
-
-    #[test]
-    fn polling_does_not_reorder_pending_browser_requests() {
-        let mut state = State::default();
-        let mut first = assertion_request();
-        first.request_id = Some("first".into());
-        let mut second = assertion_request();
-        second.request_id = Some("second".into());
-
-        for request in [first.clone(), second, first] {
-            let _ = handle(Request::PasskeyBrowserAssert { request }, &mut state);
-        }
-
-        assert_eq!(state.pending_passkey_requests.len(), 2);
-        assert_eq!(state.pending_passkey_requests[0].id, "first");
-        assert_eq!(state.pending_passkey_requests[1].id, "second");
-    }
 
     #[test]
     fn arming_requires_an_active_session() {

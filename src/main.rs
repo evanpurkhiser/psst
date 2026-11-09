@@ -5,6 +5,7 @@ mod crypto;
 mod daemon;
 mod error;
 mod item;
+mod passkey_authorization;
 mod plugin;
 mod protocol;
 mod skill;
