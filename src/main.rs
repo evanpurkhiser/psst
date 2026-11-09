@@ -122,6 +122,10 @@ enum BrowserCommand {
         #[arg(long = "peer-uid", value_name = "UID")]
         allowed_peer_uids: Vec<u32>,
     },
+    /// Report installed browser paths and container peer authorization.
+    Status,
+    /// Clear all container browser peer authorization.
+    Reset,
 }
 
 fn main() {
@@ -278,10 +282,21 @@ fn run_passkey(command: PasskeyCommand) -> Result<()> {
 fn run_browser(command: BrowserCommand) -> Result<()> {
     match command {
         BrowserCommand::Install { allowed_peer_uids } => {
-            let installation = browser::install(&allowed_peer_uids)?;
+            let peer_configuration = if allowed_peer_uids.is_empty() {
+                browser::PeerConfiguration::Preserve
+            } else {
+                browser::PeerConfiguration::Replace(&allowed_peer_uids)
+            };
+            let installation = browser::install(peer_configuration)?;
             println!("{}", installation.extension.display());
             Ok(())
         }
+        BrowserCommand::Status => {
+            serde_json::to_writer_pretty(std::io::stdout().lock(), &browser::status()?)?;
+            println!();
+            Ok(())
+        }
+        BrowserCommand::Reset => browser::reset_peers(),
     }
 }
 
@@ -296,10 +311,12 @@ fn run_agent_browser_plugin() -> Result<()> {
 
     let response = match plugin::parse(&input) {
         Ok(plugin::Action::Manifest) => plugin::manifest_response(),
-        Ok(plugin::Action::Launch) => match browser::install(&[]) {
-            Ok(installation) => plugin::launch_response(&installation.extension),
-            Err(error) => plugin::error_response(&error),
-        },
+        Ok(plugin::Action::Launch) => {
+            match browser::install(browser::PeerConfiguration::Preserve) {
+                Ok(installation) => plugin::launch_response(&installation.extension),
+                Err(error) => plugin::error_response(&error),
+            }
+        }
         Err(error) => plugin::error_response(&error),
     };
 

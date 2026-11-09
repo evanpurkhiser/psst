@@ -56,9 +56,10 @@ psst passkey handoff "$session" "$request_id"
 ```
 
 **Continue with browser** immediately uses Chrome's normal passkey flow. **Use
-PSST** creates a one-minute handoff for the displayed request identifier. The
-browser sends the live origin, challenge, relying-party ID, and credential allow
-list through Chrome native messaging only after that choice. The daemon
+PSST** creates a request identifier and starts waiting for the CLI handoff.
+`psst passkey handoff` authorizes that identifier for one minute. The browser
+sends the live origin, challenge, relying-party ID, and credential allow list
+through Chrome native messaging only after the browser choice. The daemon
 validates them and returns the WebAuthn assertion; neither the browser extension
 nor its caller receives the session identifier or private key.
 
@@ -76,8 +77,10 @@ Normal handoffs do not reinstall browser files. For initial setup:
 
 ```bash
 psst browser install
+psst browser status
 ```
 
 Container browsers require an allowed peer UID and the mounts documented with
-the installed PSST release. Setup changes are infrastructure work, separate
-from consuming a shared item.
+the installed PSST release. `psst browser reset` clears the container peer
+allowlist. Setup changes are infrastructure work, separate from consuming a
+shared item.

@@ -6,8 +6,27 @@ const HANDOFF_TTL: Duration = Duration::from_secs(60);
 
 struct Handoff {
     session: Zeroizing<String>,
-    request_id: String,
+    request_id: RequestId,
     expires_at: Instant,
+}
+
+#[derive(PartialEq, Eq)]
+struct RequestId(String);
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum HandoffError {
+    Busy,
+    InvalidRequestId,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AuthorizationError {
+    InvalidRequestId,
+}
+
+pub enum AuthorizationOutcome {
+    Authorized(Zeroizing<String>),
+    Required,
 }
 
 #[derive(Default)]
@@ -24,33 +43,46 @@ impl PasskeyAuthorization {
         }
     }
 
-    pub fn handoff(&mut self, session: &str, request_id: &str, now: Instant) -> bool {
-        if valid_request_id(request_id).is_none() {
-            return false;
+    pub fn handoff(
+        &mut self,
+        session: &str,
+        request_id: &str,
+        now: Instant,
+    ) -> Result<(), HandoffError> {
+        let request_id =
+            RequestId::parse(request_id).map_err(|_| HandoffError::InvalidRequestId)?;
+        if let Some(handoff) = self.handoff.as_ref() {
+            if handoff.session.as_str() == session && handoff.request_id == request_id {
+                return Ok(());
+            }
+
+            return Err(HandoffError::Busy);
         }
 
         self.handoff = Some(Handoff {
             session: Zeroizing::new(session.into()),
-            request_id: request_id.into(),
+            request_id,
             expires_at: now + HANDOFF_TTL,
         });
-        true
+        Ok(())
     }
 
     pub fn authorize(
         &mut self,
         request_id: Option<&str>,
         now: Instant,
-    ) -> Option<Zeroizing<String>> {
-        let request_id = request_id.and_then(valid_request_id);
-        let matches_handoff = self.handoff.as_ref().is_some_and(|handoff| {
-            handoff.expires_at > now && Some(handoff.request_id.as_str()) == request_id
-        });
-        if !matches_handoff {
-            return None;
+    ) -> Result<AuthorizationOutcome, AuthorizationError> {
+        let request_id = RequestId::parse(request_id.ok_or(AuthorizationError::InvalidRequestId)?)?;
+        let Some(handoff) = self.handoff.take() else {
+            return Ok(AuthorizationOutcome::Required);
+        };
+        if handoff.expires_at <= now || handoff.request_id != request_id {
+            self.handoff = Some(handoff);
+
+            return Ok(AuthorizationOutcome::Required);
         }
 
-        self.handoff.take().map(|handoff| handoff.session)
+        Ok(AuthorizationOutcome::Authorized(handoff.session))
     }
 
     pub fn remove_session(&mut self, session: &str) {
@@ -64,17 +96,21 @@ impl PasskeyAuthorization {
     }
 }
 
-fn valid_request_id(request_id: &str) -> Option<&str> {
-    let bytes = request_id.as_bytes();
-    let valid = bytes.len() == 36
-        && bytes.iter().enumerate().all(|(index, byte)| match index {
-            8 | 13 | 18 | 23 => *byte == b'-',
-            _ => byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase(),
-        })
-        && bytes[14] == b'4'
-        && matches!(bytes[19], b'8' | b'9' | b'a' | b'b');
+impl RequestId {
+    fn parse(value: &str) -> Result<Self, AuthorizationError> {
+        let bytes = value.as_bytes();
+        let valid = bytes.len() == 36
+            && bytes.iter().enumerate().all(|(index, byte)| match index {
+                8 | 13 | 18 | 23 => *byte == b'-',
+                _ => byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase(),
+            })
+            && bytes[14] == b'4'
+            && matches!(bytes[19], b'8' | b'9' | b'a' | b'b');
 
-    valid.then_some(request_id)
+        valid
+            .then(|| Self(value.into()))
+            .ok_or(AuthorizationError::InvalidRequestId)
+    }
 }
 
 #[cfg(test)]
@@ -88,16 +124,18 @@ mod tests {
         let now = Instant::now();
         let mut authorization = PasskeyAuthorization::default();
 
-        assert!(authorization.handoff("session", REQUEST_ID, now));
+        assert_eq!(authorization.handoff("session", REQUEST_ID, now), Ok(()));
 
-        assert_eq!(
-            authorization
-                .authorize(Some(REQUEST_ID), now)
-                .as_ref()
-                .map(|session| session.as_str()),
-            Some("session")
-        );
-        assert!(authorization.authorize(Some(REQUEST_ID), now).is_none());
+        let AuthorizationOutcome::Authorized(session) =
+            authorization.authorize(Some(REQUEST_ID), now).unwrap()
+        else {
+            panic!("expected authorization");
+        };
+        assert_eq!(session.as_str(), "session");
+        assert!(matches!(
+            authorization.authorize(Some(REQUEST_ID), now),
+            Ok(AuthorizationOutcome::Required)
+        ));
     }
 
     #[test]
@@ -105,13 +143,12 @@ mod tests {
         let now = Instant::now();
         let mut authorization = PasskeyAuthorization::default();
 
-        authorization.handoff("session", REQUEST_ID, now);
+        authorization.handoff("session", REQUEST_ID, now).unwrap();
 
-        assert!(
-            authorization
-                .authorize(Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), now)
-                .is_none()
-        );
+        assert!(matches!(
+            authorization.authorize(Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), now),
+            Ok(AuthorizationOutcome::Required)
+        ));
     }
 
     #[test]
@@ -119,15 +156,12 @@ mod tests {
         let now = Instant::now();
         let mut authorization = PasskeyAuthorization::default();
 
-        authorization.handoff("session", REQUEST_ID, now);
+        authorization.handoff("session", REQUEST_ID, now).unwrap();
 
-        assert_eq!(
-            authorization
-                .authorize(Some(REQUEST_ID), now)
-                .as_ref()
-                .map(|session| session.as_str()),
-            Some("session")
-        );
+        assert!(matches!(
+            authorization.authorize(Some(REQUEST_ID), now),
+            Ok(AuthorizationOutcome::Authorized(_))
+        ));
     }
 
     #[test]
@@ -135,13 +169,12 @@ mod tests {
         let now = Instant::now();
         let mut authorization = PasskeyAuthorization::default();
 
-        authorization.handoff("session", REQUEST_ID, now);
+        authorization.handoff("session", REQUEST_ID, now).unwrap();
 
-        assert!(
-            authorization
-                .authorize(Some(REQUEST_ID), now + HANDOFF_TTL)
-                .is_none()
-        );
+        assert!(matches!(
+            authorization.authorize(Some(REQUEST_ID), now + HANDOFF_TTL),
+            Ok(AuthorizationOutcome::Required)
+        ));
     }
 
     #[test]
@@ -149,9 +182,56 @@ mod tests {
         let now = Instant::now();
         let mut authorization = PasskeyAuthorization::default();
 
-        assert!(!authorization.handoff("session", "request", now));
-        assert!(!authorization.handoff("session", "410e26bd-7701-3481-8b7e-9f4215edbd8d", now));
-        assert!(!authorization.handoff("session", "410e26bd-7701-4481-7b7e-9f4215edbd8d", now));
+        assert_eq!(
+            authorization.handoff("session", "request", now),
+            Err(HandoffError::InvalidRequestId)
+        );
+        assert_eq!(
+            authorization.handoff("session", "410e26bd-7701-3481-8b7e-9f4215edbd8d", now),
+            Err(HandoffError::InvalidRequestId)
+        );
+        assert_eq!(
+            authorization.handoff("session", "410e26bd-7701-4481-7b7e-9f4215edbd8d", now),
+            Err(HandoffError::InvalidRequestId)
+        );
+    }
+
+    #[test]
+    fn identical_handoff_is_idempotent() {
+        let now = Instant::now();
+        let mut authorization = PasskeyAuthorization::default();
+
+        authorization.handoff("session", REQUEST_ID, now).unwrap();
+
+        assert_eq!(authorization.handoff("session", REQUEST_ID, now), Ok(()));
+    }
+
+    #[test]
+    fn competing_handoff_is_busy_without_replacing_the_first() {
+        let now = Instant::now();
+        let mut authorization = PasskeyAuthorization::default();
+        let other = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+        authorization.handoff("session", REQUEST_ID, now).unwrap();
+
+        assert_eq!(
+            authorization.handoff("session", other, now),
+            Err(HandoffError::Busy)
+        );
+        assert!(matches!(
+            authorization.authorize(Some(REQUEST_ID), now),
+            Ok(AuthorizationOutcome::Authorized(_))
+        ));
+    }
+
+    #[test]
+    fn malformed_browser_request_is_rejected() {
+        let mut authorization = PasskeyAuthorization::default();
+
+        assert!(matches!(
+            authorization.authorize(None, Instant::now()),
+            Err(AuthorizationError::InvalidRequestId)
+        ));
     }
 
     #[test]
@@ -159,10 +239,13 @@ mod tests {
         let now = Instant::now();
         let mut authorization = PasskeyAuthorization::default();
 
-        authorization.handoff("session", REQUEST_ID, now);
+        authorization.handoff("session", REQUEST_ID, now).unwrap();
         authorization.remove_session("session");
 
-        assert!(authorization.authorize(Some(REQUEST_ID), now).is_none());
+        assert!(matches!(
+            authorization.authorize(Some(REQUEST_ID), now),
+            Ok(AuthorizationOutcome::Required)
+        ));
     }
 
     #[test]
@@ -170,9 +253,12 @@ mod tests {
         let now = Instant::now();
         let mut authorization = PasskeyAuthorization::default();
 
-        authorization.handoff("session", REQUEST_ID, now);
+        authorization.handoff("session", REQUEST_ID, now).unwrap();
         authorization.expire(now, |_| false);
 
-        assert!(authorization.authorize(Some(REQUEST_ID), now).is_none());
+        assert!(matches!(
+            authorization.authorize(Some(REQUEST_ID), now),
+            Ok(AuthorizationOutcome::Required)
+        ));
     }
 }

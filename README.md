@@ -145,8 +145,14 @@ $ trap - EXIT
 **Use PSST** starts a handoff for that exact request; no native host or daemon
 request is created before that choice. A handoff authorizes its displayed
 identifier once and expires after one minute. Equivalent concurrent requests
-from the page share the same choice and assertion. The extension never receives
-the PSST session reference or private key.
+from the page share the same choice and assertion. A second distinct request
+fails while the first is awaiting a choice instead of opening an unexpected
+native prompt. The extension never receives the PSST session reference or
+private key.
+
+Use `psst browser status` to inspect the installed paths and container peer
+allowlist. `psst browser reset` clears the peer allowlist without removing the
+installed browser assets.
 
 ### Low-level assertions
 

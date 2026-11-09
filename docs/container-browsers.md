@@ -18,6 +18,10 @@ owns the socket. Use the UID reported by `browser_peer_unauthorized` when the
 runtime uses a different mapping. Repeat `--peer-uid` to allow more than one
 mapping.
 
+`psst browser status` reports the installed paths and current peer allowlist.
+`psst browser reset` clears the peer allowlist without removing the installed
+extension or native-host files.
+
 Mount these host paths into the browser container:
 
 | Host | Container | Access |

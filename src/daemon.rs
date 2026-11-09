@@ -21,7 +21,9 @@ use crate::{
     crypto::{self, EncryptedContainer},
     error::{Error, Result},
     item,
-    passkey_authorization::PasskeyAuthorization,
+    passkey_authorization::{
+        AuthorizationError, AuthorizationOutcome, HandoffError, PasskeyAuthorization,
+    },
     protocol::{Request, Response},
     webauthn::AssertionRequest,
 };
@@ -90,7 +92,7 @@ pub fn run() -> Result<()> {
     let listener = UnixListener::bind(&socket_path)?;
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
-    let browser_bridge = browser_bridge()?;
+    let (browser_listener, browser_socket_path) = browser_bridge()?;
 
     let mut state = State::default();
     let mut idle_since = Instant::now();
@@ -112,31 +114,22 @@ pub fn run() -> Result<()> {
             Err(error) => return Err(error.into()),
         }
 
-        if let Some((listener, allowed_peer_uids, _)) = browser_bridge.as_ref() {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    idle_since = Instant::now();
-                    handle_browser_connection(&mut stream, allowed_peer_uids, &mut state);
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(error) => return Err(error.into()),
+        match browser_listener.accept() {
+            Ok((mut stream, _)) => {
+                idle_since = Instant::now();
+                handle_browser_connection(&mut stream, &mut state);
             }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error.into()),
         }
     }
 
     fs::remove_file(socket_path)?;
-    if let Some((_, _, socket_path)) = browser_bridge {
-        fs::remove_file(socket_path)?;
-    }
+    fs::remove_file(browser_socket_path)?;
     Ok(())
 }
 
-fn browser_bridge() -> Result<Option<(UnixListener, Vec<u32>, PathBuf)>> {
-    let config = browser::config()?;
-    if config.allowed_peer_uids.is_empty() {
-        return Ok(None);
-    }
-
+fn browser_bridge() -> Result<(UnixListener, PathBuf)> {
     let socket_path = browser::socket_path()?;
     let directory = socket_path.parent().ok_or(Error::BrowserInstallPath)?;
     match fs::create_dir(directory) {
@@ -155,7 +148,7 @@ fn browser_bridge() -> Result<Option<(UnixListener, Vec<u32>, PathBuf)>> {
     fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))?;
     listener.set_nonblocking(true)?;
 
-    Ok(Some((listener, config.allowed_peer_uids, socket_path)))
+    Ok((listener, socket_path))
 }
 
 pub fn socket_path() -> Result<PathBuf> {
@@ -222,11 +215,7 @@ fn handle_connection(stream: &mut UnixStream, state: &mut State) {
     }
 }
 
-fn handle_browser_connection(
-    stream: &mut UnixStream,
-    allowed_peer_uids: &[u32],
-    state: &mut State,
-) {
+fn handle_browser_connection(stream: &mut UnixStream, state: &mut State) {
     if stream.set_read_timeout(Some(IO_TIMEOUT)).is_err()
         || stream.set_write_timeout(Some(IO_TIMEOUT)).is_err()
     {
@@ -235,7 +224,8 @@ fn handle_browser_connection(
 
     let reply = peer_uid(stream)
         .and_then(|uid| {
-            allowed_peer_uids
+            browser::config()?
+                .allowed_peer_uids
                 .contains(&uid)
                 .then_some(())
                 .ok_or(Error::BrowserPeer(uid))
@@ -398,21 +388,32 @@ fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroi
             ref request_id,
         } => {
             active_session(&state.sessions, session)?;
-            if !state
+            match state
                 .passkey_authorization
                 .handoff(session, request_id, Instant::now())
             {
-                return Err(Error::WebAuthnRequest(
-                    "invalid passkey request identifier".into(),
-                ));
+                Ok(()) => {}
+                Err(HandoffError::Busy) => return Err(Error::PasskeyHandoffBusy),
+                Err(HandoffError::InvalidRequestId) => {
+                    return Err(Error::WebAuthnRequest(
+                        "invalid passkey request identifier".into(),
+                    ));
+                }
             }
             Ok((Response::PasskeyHandoffReady, None))
         }
         Request::PasskeyBrowserAssert { ref request } => {
-            let session_id = state
+            let outcome = state
                 .passkey_authorization
                 .authorize(request.request_id.as_deref(), Instant::now())
-                .ok_or(Error::PasskeyHandoffRequired)?;
+                .map_err(|error| match error {
+                    AuthorizationError::InvalidRequestId => {
+                        Error::WebAuthnRequest("invalid passkey request identifier".into())
+                    }
+                })?;
+            let AuthorizationOutcome::Authorized(session_id) = outcome else {
+                return Err(Error::PasskeyHandoffRequired);
+            };
             let session = active_session(&state.sessions, session_id.as_str())?;
             let overview = session.decrypt_overview()?;
             let details = session.decrypt_details()?;

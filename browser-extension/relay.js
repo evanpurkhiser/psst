@@ -8,6 +8,12 @@ const failureMessage = response => {
   if (["native_host_unavailable", "browser_bridge_unavailable"].includes(response?.code)) {
     return "PSST is not ready. Open a PSST session, then try again.";
   }
+  if (response?.code === "browser_peer_unauthorized") {
+    return (
+      "This browser is not authorized for PSST. " +
+      "Inspect psst browser status and install its peer UID."
+    );
+  }
   if (response?.code === "passkey_handoff_required") {
     return "The PSST handoff expired. Try PSST again or continue with browser.";
   }
@@ -24,6 +30,7 @@ const respond = (ids, response) => {
 const closeRequest = request => {
   request.host.remove();
   if (activeRequest === request) activeRequest = undefined;
+  if (request.previousFocus?.isConnected) request.previousFocus.focus();
 };
 
 const useBrowser = request => {
@@ -34,6 +41,7 @@ const useBrowser = request => {
 const usePsst = request => {
   const requestId = crypto.randomUUID();
   request.psst.disabled = true;
+  request.browser.focus();
   request.status.textContent = `PSST handoff ${requestId} is waiting. Run psst passkey handoff <session> ${requestId}`;
 
   chrome.runtime
@@ -53,12 +61,14 @@ const usePsst = request => {
       request.psst.disabled = false;
       request.psst.textContent = "Try PSST again";
       request.status.textContent = failureMessage(response);
+      request.psst.focus();
     })
     .catch(() => {
       if (activeRequest !== request || request.ids.size === 0) return;
       request.psst.disabled = false;
       request.psst.textContent = "Try PSST again";
       request.status.textContent = "The PSST browser integration is unavailable";
+      request.psst.focus();
     });
 };
 
@@ -137,10 +147,20 @@ const showRequest = request => {
   document.documentElement.append(host);
 
   request.host = host;
+  request.previousFocus =
+    document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
   request.psst = psst;
+  request.browser = browser;
   request.status = status;
   psst.addEventListener("click", () => usePsst(request));
   browser.addEventListener("click", () => useBrowser(request));
+  dialog.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+
+    event.preventDefault();
+    useBrowser(request);
+  });
+  browser.focus();
 };
 
 window.addEventListener(REQUEST_EVENT, event => {
@@ -152,7 +172,10 @@ window.addEventListener(REQUEST_EVENT, event => {
     if (activeRequest.key === key) {
       activeRequest.ids.add(id);
     } else {
-      respond([id], { code: "use_browser" });
+      respond([id], {
+        success: false,
+        error: "Another passkey request is already awaiting a choice",
+      });
     }
     return;
   }

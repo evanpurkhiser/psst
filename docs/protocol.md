@@ -76,7 +76,8 @@ passes the original call to Chrome without contacting PSST. The extension
 generates a request identifier for the PSST choice, and `passkey handoff`
 authorizes only that identifier for one minute. The matching assertion consumes
 the handoff even when WebAuthn validation fails. Equivalent concurrent calls
-from one page share a choice and assertion.
+from one page share a choice and assertion. A distinct concurrent call receives
+a busy error while the first request is awaiting a choice.
 
 The Agent Browser plugin implements its existing `launch.mutate` capability and
 returns the installed extension directory for local Chrome launches. It does

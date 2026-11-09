@@ -29,29 +29,46 @@ pub struct Installation {
     pub extension: PathBuf,
 }
 
+pub enum PeerConfiguration<'a> {
+    Preserve,
+    Replace(&'a [u32]),
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserStatus {
+    extension: PathBuf,
+    extension_installed: bool,
+    native_host_proxy: PathBuf,
+    native_host_proxy_installed: bool,
+    native_host_manifests: Vec<PathBuf>,
+    native_host_manifests_installed: bool,
+    container_native_host_manifest: PathBuf,
+    container_native_host_manifest_installed: bool,
+    allowed_peer_uids: Vec<u32>,
+}
+
+struct BrowserPaths {
+    extension: PathBuf,
+    native_host_proxy: PathBuf,
+    native_host_manifests: Vec<PathBuf>,
+    container_native_host_manifest: PathBuf,
+    config: PathBuf,
+}
+
 pub fn is_extension_origin(value: &str) -> bool {
     value == EXTENSION_ORIGIN || value == EXTENSION_ORIGIN.trim_end_matches('/')
 }
 
-pub fn install(allowed_peer_uids: &[u32]) -> Result<Installation> {
-    let home = home_dir()?;
-    let data_home = env::var_os("XDG_DATA_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local/share"));
-    let config_home = env::var_os("XDG_CONFIG_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"));
-    let extension = data_home.join("psst/chrome-extension");
+pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation> {
+    let paths = paths()?;
 
-    write_if_changed(extension.join("manifest.json"), MANIFEST.as_bytes())?;
-    write_if_changed(extension.join("background.js"), BACKGROUND.as_bytes())?;
-    write_if_changed(extension.join("relay.js"), RELAY.as_bytes())?;
-    write_if_changed(extension.join("bridge.js"), BRIDGE.as_bytes())?;
+    write_if_changed(paths.extension.join("manifest.json"), MANIFEST.as_bytes())?;
+    write_if_changed(paths.extension.join("background.js"), BACKGROUND.as_bytes())?;
+    write_if_changed(paths.extension.join("relay.js"), RELAY.as_bytes())?;
+    write_if_changed(paths.extension.join("bridge.js"), BRIDGE.as_bytes())?;
 
-    let native_host_proxy = data_home.join("psst/native-host.py");
-    write_executable_if_changed(&native_host_proxy, NATIVE_HOST_PROXY.as_bytes())?;
+    write_executable_if_changed(&paths.native_host_proxy, NATIVE_HOST_PROXY.as_bytes())?;
 
     let executable = env::current_exe()?.canonicalize()?;
     let native_manifest = serde_json::to_vec_pretty(&json!({
@@ -61,14 +78,8 @@ pub fn install(allowed_peer_uids: &[u32]) -> Result<Installation> {
         "type": "stdio",
         "allowed_origins": [EXTENSION_ORIGIN],
     }))?;
-    for browser in ["google-chrome", "google-chrome-for-testing", "chromium"] {
-        write_if_changed(
-            config_home
-                .join(browser)
-                .join("NativeMessagingHosts")
-                .join(format!("{NATIVE_HOST}.json")),
-            &native_manifest,
-        )?;
+    for manifest in &paths.native_host_manifests {
+        write_if_changed(manifest.clone(), &native_manifest)?;
     }
 
     let container_manifest = serde_json::to_vec_pretty(&json!({
@@ -79,23 +90,49 @@ pub fn install(allowed_peer_uids: &[u32]) -> Result<Installation> {
         "allowed_origins": [EXTENSION_ORIGIN],
     }))?;
     write_if_changed(
-        data_home
-            .join("psst/container-native-host")
-            .join(format!("{NATIVE_HOST}.json")),
+        paths.container_native_host_manifest.clone(),
         &container_manifest,
     )?;
 
-    if !allowed_peer_uids.is_empty() {
+    if let PeerConfiguration::Replace(allowed_peer_uids) = peer_configuration {
         let config = BrowserConfig {
             allowed_peer_uids: allowed_peer_uids.to_vec(),
         };
-        write_if_changed(
-            config_home.join("psst/browser.json"),
-            &serde_json::to_vec_pretty(&config)?,
-        )?;
+        write_if_changed(paths.config, &serde_json::to_vec_pretty(&config)?)?;
     }
 
-    Ok(Installation { extension })
+    Ok(Installation {
+        extension: paths.extension,
+    })
+}
+
+pub fn status() -> Result<BrowserStatus> {
+    let paths = paths()?;
+    let browser_config = config()?;
+    let native_host_manifests_installed = paths
+        .native_host_manifests
+        .iter()
+        .all(|path| path.is_file());
+    let container_native_host_manifest_installed = paths.container_native_host_manifest.is_file();
+
+    Ok(BrowserStatus {
+        extension_installed: paths.extension.join("manifest.json").is_file(),
+        native_host_proxy_installed: paths.native_host_proxy.is_file(),
+        extension: paths.extension,
+        native_host_proxy: paths.native_host_proxy,
+        native_host_manifests: paths.native_host_manifests,
+        native_host_manifests_installed,
+        container_native_host_manifest: paths.container_native_host_manifest,
+        container_native_host_manifest_installed,
+        allowed_peer_uids: browser_config.allowed_peer_uids,
+    })
+}
+
+pub fn reset_peers() -> Result<()> {
+    write_if_changed(
+        paths()?.config,
+        &serde_json::to_vec_pretty(&BrowserConfig::default())?,
+    )
 }
 
 pub fn config() -> Result<BrowserConfig> {
@@ -144,6 +181,37 @@ fn home_dir() -> Result<PathBuf> {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .ok_or(Error::HomeDirectory)
+}
+
+fn paths() -> Result<BrowserPaths> {
+    let home = home_dir()?;
+    let data_home = env::var_os("XDG_DATA_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local/share"));
+    let config_home = env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    let native_host_manifests = ["google-chrome", "google-chrome-for-testing", "chromium"]
+        .into_iter()
+        .map(|browser| {
+            config_home
+                .join(browser)
+                .join("NativeMessagingHosts")
+                .join(format!("{NATIVE_HOST}.json"))
+        })
+        .collect();
+
+    Ok(BrowserPaths {
+        extension: data_home.join("psst/chrome-extension"),
+        native_host_proxy: data_home.join("psst/native-host.py"),
+        native_host_manifests,
+        container_native_host_manifest: data_home
+            .join("psst/container-native-host")
+            .join(format!("{NATIVE_HOST}.json")),
+        config: config_home.join("psst/browser.json"),
+    })
 }
 
 #[cfg(test)]
