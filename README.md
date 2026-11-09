@@ -130,15 +130,14 @@ shows **Use psst** and **Continue with browser**. Choose **Use psst**, then pass
 the displayed request identifier to `handoff`:
 
 ```console
-$ session="$(printf '%s' "$ONEPASSWORD_SHARE_URL" | psst open)"
-$ trap 'psst close "$session" 2>/dev/null || true' EXIT
+$ printf '%s' "$ONEPASSWORD_SHARE_URL" | psst open
+OPAQUE_SESSION_REFERENCE
 $ agent-browser --session work open https://login.example.com
 # Complete the site's identifier steps and trigger its passkey action.
 # Click "Use psst" in the browser prompt and read its request identifier.
-$ psst passkey handoff "$session" "$request_id"
+$ psst passkey handoff OPAQUE_SESSION_REFERENCE REQUEST_ID
 # The existing browser request completes without a retry.
-$ psst close "$session"
-$ trap - EXIT
+$ psst close OPAQUE_SESSION_REFERENCE
 ```
 
 **Continue with browser** immediately passes the original request to Chrome.

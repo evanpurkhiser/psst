@@ -12,20 +12,24 @@ request only the fields or passkey operations they need.
 ## Open and close every session
 
 Give the share link to `open` on standard input. Never place it in a command
-argument or print it:
+argument or print it. Retain the returned opaque session reference for later
+tool calls:
 
 ```bash
-session="$(printf '%s' "$share_url" | psst open)"
-trap 'psst close "$session" 2>/dev/null || true' EXIT
+printf '%s' "$share_url" | psst open
+# Capture the single opaque line returned by the command.
 ```
+
+Shell variables and traps do not persist across independent tool calls. Pass the
+exact returned reference wherever `SESSION_REFERENCE` appears below; never echo
+or log it.
 
 The session expires after five minutes. A view-once share is consumed by
 `open`, so use a short-lived multi-view share when the workflow may need a
 retry. Close the session as soon as its consumer finishes:
 
 ```bash
-psst close "$session"
-trap - EXIT
+psst close SESSION_REFERENCE
 ```
 
 ## Consume a field
@@ -33,9 +37,9 @@ trap - EXIT
 Inspect metadata first, then use an exact returned selector:
 
 ```bash
-psst fields "$session"
-psst get "$session" -- <selector> | <consumer>
-psst download "$session" -- <file-selector> | <consumer>
+psst fields SESSION_REFERENCE
+psst get SESSION_REFERENCE -- SELECTOR | <consumer>
+psst download SESSION_REFERENCE -- FILE_SELECTOR | <consumer>
 ```
 
 `get` and `download` refuse terminal output. Keep the direct pipe intact; never
@@ -54,7 +58,7 @@ that exact request:
 
 ```bash
 # Complete the identifier step or click the site's passkey button.
-psst passkey handoff "$session" "$request_id"
+psst passkey handoff SESSION_REFERENCE REQUEST_ID
 # The existing browser request finishes without a retry.
 ```
 
