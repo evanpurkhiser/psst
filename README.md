@@ -148,7 +148,9 @@ identifier once and expires after one minute. Equivalent concurrent requests
 from the page share the same choice and assertion. A second distinct request
 fails while the first is awaiting a choice instead of opening an unexpected
 native prompt. The extension never receives the psst session reference or
-private key.
+private key. Conditional mediation requests surface the same choice so an agent
+can request a passkey share before the user submits the login form. Silent
+mediation remains with Chrome because it cannot require user interaction.
 
 Use `psst browser status` to inspect the installed paths and container peer
 allowlist. `psst browser reset` clears the peer allowlist without removing the

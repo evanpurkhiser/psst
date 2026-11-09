@@ -46,7 +46,9 @@
   };
 
   CredentialsContainer.prototype.get = function (options = {}) {
-    if (!options.publicKey) return Reflect.apply(nativeGet, this, arguments);
+    if (!options.publicKey || options.mediation === "silent") {
+      return Reflect.apply(nativeGet, this, arguments);
+    }
 
     const id = crypto.randomUUID();
     const container = this;

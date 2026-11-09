@@ -46,6 +46,9 @@ explicitly requires a file. Retrieve only the fields required for the task.
 
 The browser integration must already be installed. Trigger the site's normal
 passkey action. The browser displays **Use psst** and **Continue with browser**.
+Conditional mediation may display this choice as soon as the login form loads.
+If the passkey has not been shared, ask Evan to share the matching 1Password
+item before choosing **Use psst**; the original browser request remains pending.
 Choose **Use psst**, read the request identifier from its status, and hand off
 that exact request:
 

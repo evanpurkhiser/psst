@@ -79,6 +79,10 @@ the handoff even when WebAuthn validation fails. Equivalent concurrent calls
 from one page share a choice and assertion. A distinct concurrent call receives
 a busy error while the first request is awaiting a choice.
 
+Conditional mediation requests use this choice so browser drivers can request a
+shared passkey while the login form is active. Silent mediation stays native and
+never creates a psst prompt.
+
 The Agent Browser plugin implements its existing `launch.mutate` capability and
 returns the installed extension directory for local Chrome launches. It does
 not participate in assertion signing.
