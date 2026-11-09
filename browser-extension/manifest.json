@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "PSST Passkeys",
+  "version": "0.1.0",
+  "description": "Completes WebAuthn assertions authorized by a PSST session.",
+  "minimum_chrome_version": "102",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtqMDAF8j8RGJxMGxaUkQks6aS1l1/lLrtk1I+Zc5t71CJMfF0/dzhbEvoQajTrOOC+KzXICQuSuO34CdEyf4HogC1/XK1YcDhqrWwVkej+9HBCbcSBaiiSECa7ab+LmXP/JaElF9DYRg/JDAozpPE5NeBFLWzyVCmKCmicRX2tE0GnOsE9noALb58RVqTdp4JBCgBjajTQembjZi7nyQCSXVVEZQYzdl/MAzXFNIt7gm4paSMbDORTkKwTO/OLAsD3XJATi3Os+7LHMD30dgj1aFsrfdjGPewm2YAEGLMkSpAHkKObM6oNrXD2JOoCAxPiyhKlXSsslFVGhd+tMOGQIDAQAB",
+  "permissions": ["nativeMessaging"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*"],
+      "js": ["relay.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
+    {
+      "matches": ["https://*/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}
