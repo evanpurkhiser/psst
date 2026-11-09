@@ -393,16 +393,26 @@ fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroi
                 None,
             ))
         }
-        Request::PasskeyArm { ref session } => {
+        Request::PasskeyHandoff {
+            ref session,
+            ref request_id,
+        } => {
             active_session(&state.sessions, session)?;
-            state.passkey_authorization.arm(session, Instant::now());
-            Ok((Response::PasskeyArmed, None))
+            if !state
+                .passkey_authorization
+                .handoff(session, request_id, Instant::now())
+            {
+                return Err(Error::WebAuthnRequest(
+                    "invalid passkey request identifier".into(),
+                ));
+            }
+            Ok((Response::PasskeyHandoffReady, None))
         }
         Request::PasskeyBrowserAssert { ref request } => {
             let session_id = state
                 .passkey_authorization
                 .authorize(request.request_id.as_deref(), Instant::now())
-                .ok_or(Error::PasskeyNotArmed)?;
+                .ok_or(Error::PasskeyHandoffRequired)?;
             let session = active_session(&state.sessions, session_id.as_str())?;
             let overview = session.decrypt_overview()?;
             let details = session.decrypt_details()?;
@@ -443,10 +453,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn arming_requires_an_active_session() {
+    fn handoff_requires_an_active_session() {
         let result = handle(
-            Request::PasskeyArm {
+            Request::PasskeyHandoff {
                 session: "missing".into(),
+                request_id: "410e26bd-7701-4481-8b7e-9f4215edbd8d".into(),
             },
             &mut State::default(),
         );

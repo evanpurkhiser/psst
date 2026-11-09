@@ -1,4 +1,6 @@
 const HOST = "com.evanpurkhiser.psst";
+const MAX_PENDING_ASSERTIONS = 1;
+const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const pendingAssertions = new Map();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -10,16 +12,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (typeof message.requestId !== "string" || !REQUEST_ID_PATTERN.test(message.requestId)) {
+    sendResponse({ success: false, error: "The passkey handoff identifier is invalid" });
+    return false;
+  }
+
   const assertion = { ...message.request, origin: senderUrl.origin };
-  const key = JSON.stringify(assertion);
+  const key = `${sender.tab?.id ?? "unknown"}:${JSON.stringify(assertion)}`;
   const pending = pendingAssertions.get(key);
   if (pending) {
     pending.push(sendResponse);
     return true;
   }
 
+  if (pendingAssertions.size >= MAX_PENDING_ASSERTIONS) {
+    sendResponse({ success: false, error: "Too many PSST passkey handoffs are active" });
+    return false;
+  }
+
   pendingAssertions.set(key, [sendResponse]);
-  chrome.runtime.sendNativeMessage(HOST, { ...assertion, requestId: message.id }, response => {
+  chrome.runtime.sendNativeMessage(HOST, { ...assertion, requestId: message.requestId }, response => {
     const callbacks = pendingAssertions.get(key) || [];
     pendingAssertions.delete(key);
 

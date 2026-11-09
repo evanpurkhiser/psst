@@ -34,7 +34,7 @@ const MAX_JSON_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_DAEMON_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const DAEMON_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const DAEMON_READ_TIMEOUT: Duration = Duration::from_secs(20);
-const PASSKEY_PENDING_TIMEOUT: Duration = Duration::from_secs(60);
+const PASSKEY_HANDOFF_TIMEOUT: Duration = Duration::from_secs(60);
 const PASSKEY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Parser)]
@@ -105,10 +105,12 @@ enum PasskeyCommand {
         /// Opaque identifier returned by `psst open`.
         session: String,
     },
-    /// Authorize a pending or next browser assertion for up to one minute.
-    Arm {
+    /// Authorize one browser passkey request for up to one minute.
+    Handoff {
         /// Opaque identifier returned by `psst open`.
         session: String,
+        /// Identifier displayed by the PSST browser prompt.
+        request_id: String,
     },
 }
 
@@ -260,8 +262,14 @@ fn run_passkey(command: PasskeyCommand) -> Result<()> {
                 response => unexpected(response),
             }
         }
-        PasskeyCommand::Arm { session } => match request(Request::PasskeyArm { session })? {
-            Response::PasskeyArmed => Ok(()),
+        PasskeyCommand::Handoff {
+            session,
+            request_id,
+        } => match request(Request::PasskeyHandoff {
+            session,
+            request_id,
+        })? {
+            Response::PasskeyHandoffReady => Ok(()),
             response => unexpected(response),
         },
     }
@@ -330,7 +338,7 @@ fn run_native_host() -> Result<()> {
 fn wait_for_browser_assertion(
     assertion_request: webauthn::AssertionRequest,
 ) -> Result<serde_json::Value> {
-    let deadline = Instant::now() + PASSKEY_PENDING_TIMEOUT;
+    let deadline = Instant::now() + PASSKEY_HANDOFF_TIMEOUT;
     loop {
         match request(Request::PasskeyBrowserAssert {
             request: assertion_request.clone(),
@@ -342,7 +350,7 @@ fn wait_for_browser_assertion(
                 }));
             }
             Ok(response) => return unexpected(response),
-            Err(Error::Remote { code, message }) if code == "passkey_not_armed" => {
+            Err(Error::Remote { code, message }) if code == "passkey_handoff_required" => {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining <= PASSKEY_POLL_INTERVAL {
                     thread::sleep(remaining);

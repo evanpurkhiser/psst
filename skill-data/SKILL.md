@@ -45,27 +45,26 @@ explicitly requires a file. Retrieve only the fields required for the task.
 ## Authenticate with a passkey
 
 The browser integration must already be installed. Trigger the site's normal
-passkey action first, then arm the request that is waiting in PSST:
+passkey action. The browser displays **Use PSST** and **Continue with browser**.
+Choose **Use PSST**, read the request identifier from its status, and hand off
+that exact request:
 
 ```bash
-psst passkey describe "$session"
 # Complete the identifier step or click the site's passkey button.
-psst passkey arm "$session"
-# Wait for that browser request to finish.
+psst passkey handoff "$session" "$request_id"
+# The existing browser request finishes without a retry.
 ```
 
-The browser holds an unarmed request for up to one minute. An arm binds to the
-newest pending request, or to the next request when none is pending, and
-authorizes one assertion for up to one minute. The browser sends the live
-origin, challenge, relying-party ID, and credential allow list through Chrome
-native messaging. The daemon validates them and returns the WebAuthn assertion;
-neither the browser extension nor its caller receives the session identifier or
-private key.
+**Continue with browser** immediately uses Chrome's normal passkey flow. **Use
+PSST** creates a one-minute handoff for the displayed request identifier. The
+browser sends the live origin, challenge, relying-party ID, and credential allow
+list through Chrome native messaging only after that choice. The daemon
+validates them and returns the WebAuthn assertion; neither the browser extension
+nor its caller receives the session identifier or private key.
 
-If the browser reports that PSST is unavailable or uses a native authenticator,
-check the installed browser integration before arming again. Do not repeatedly
-arm while probing the page: the matching assertion attempt consumes the arm,
-including when its request fails validation.
+If the handoff fails, the browser keeps **Continue with browser** available and
+offers a new PSST request identifier for another attempt. Each handoff is
+one-shot, including when its request fails WebAuthn validation.
 
 `psst passkey assert` is the lower-level interface for a non-browser WebAuthn
 consumer that already has the request's origin and challenge. Prefer the

@@ -30,8 +30,8 @@ pub enum Error {
     PasskeyKey,
     #[error("invalid WebAuthn request: {0}")]
     WebAuthnRequest(String),
-    #[error("no passkey session is armed for browser authentication")]
-    PasskeyNotArmed,
+    #[error("the browser passkey request has not been handed off to PSST")]
+    PasskeyHandoffRequired,
     #[error("refusing to write a secret to a terminal; pipe or redirect stdout")]
     SecretToTerminal,
     #[error("refusing to read a share link from a terminal; pipe or redirect stdin")]
@@ -96,7 +96,7 @@ impl Error {
             Self::UnsupportedPasskey => "passkey_unsupported",
             Self::PasskeyKey => "passkey_key_invalid",
             Self::WebAuthnRequest(_) => "webauthn_request_invalid",
-            Self::PasskeyNotArmed => "passkey_not_armed",
+            Self::PasskeyHandoffRequired => "passkey_handoff_required",
             Self::SecretToTerminal => "secret_to_terminal",
             Self::ShareFromTerminal => "share_from_terminal",
             Self::SessionNotFound(_) => "session_not_found",
@@ -142,7 +142,7 @@ impl Error {
             | "field_not_file"
             | "invalid_totp"
             | "passkey_unavailable"
-            | "passkey_not_armed"
+            | "passkey_handoff_required"
             | "webauthn_request_invalid" => 20,
             "secret_to_terminal" => 21,
             "session_not_found" => 22,

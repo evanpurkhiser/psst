@@ -70,13 +70,13 @@ material and offers no arbitrary-byte signing operation.
 ## Browser bridge
 
 The Chrome extension forwards the top-level page origin, challenge,
-relying-party ID, and credential allow list through Chrome native messaging.
-The native host keeps an unarmed request pending for up to one minute.
-`passkey arm` binds an active session to the newest pending request, or to the
-next request when none is pending, and expires after one minute. The matching
-request consumes the arm even when its WebAuthn validation fails. Equivalent
-concurrent calls are coalesced into one assertion, which the extension returns
-to each caller.
+relying-party ID, and credential allow list through Chrome native messaging
+after the user or browser driver chooses **Use PSST**. **Continue with browser**
+passes the original call to Chrome without contacting PSST. The extension
+generates a request identifier for the PSST choice, and `passkey handoff`
+authorizes only that identifier for one minute. The matching assertion consumes
+the handoff even when WebAuthn validation fails. Equivalent concurrent calls
+from one page share a choice and assertion.
 
 The Agent Browser plugin implements its existing `launch.mutate` capability and
 returns the installed extension directory for local Chrome launches. It does

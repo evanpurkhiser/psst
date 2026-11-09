@@ -30,8 +30,9 @@ pub enum Request {
         session: String,
         request: AssertionRequest,
     },
-    PasskeyArm {
+    PasskeyHandoff {
         session: String,
+        request_id: String,
     },
     PasskeyBrowserAssert {
         request: AssertionRequest,
@@ -47,13 +48,14 @@ impl Drop for Request {
             Self::Open { url } => url.zeroize(),
             Self::Fields { session }
             | Self::PasskeyDescribe { session }
-            | Self::PasskeyArm { session }
             | Self::Close { session } => session.zeroize(),
             Self::Get { session, field } | Self::Download { session, field } => {
                 session.zeroize();
                 field.zeroize();
             }
-            Self::PasskeyAssert { session, .. } => session.zeroize(),
+            Self::PasskeyAssert { session, .. } | Self::PasskeyHandoff { session, .. } => {
+                session.zeroize()
+            }
             Self::PasskeyBrowserAssert { .. } => {}
         }
     }
@@ -68,7 +70,7 @@ pub enum Response {
     Attachment { size: u64 },
     PasskeyCredential { credential: CredentialSummary },
     PasskeyAssertion { assertion: Assertion },
-    PasskeyArmed,
+    PasskeyHandoffReady,
     Closed,
     Error { code: String, message: String },
 }

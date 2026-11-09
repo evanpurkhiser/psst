@@ -3,6 +3,7 @@
 
   const REQUEST_EVENT = "psst-passkey-request";
   const RESPONSE_EVENT = "psst-passkey-response";
+  const CANCEL_EVENT = "psst-passkey-cancel";
   const nativeGet = CredentialsContainer.prototype.get;
 
   const encode = value => {
@@ -48,6 +49,7 @@
     if (!options.publicKey) return Reflect.apply(nativeGet, this, arguments);
 
     const id = crypto.randomUUID();
+    const container = this;
     const request = {
       challenge: encode(options.publicKey.challenge),
       rpId: options.publicKey.rpId || location.hostname,
@@ -61,8 +63,8 @@
         options.signal?.removeEventListener("abort", abort);
 
         const response = event.detail.response;
-        if (["passkey_not_armed", "native_host_unavailable", "browser_bridge_unavailable"].includes(response?.code)) {
-          resolve(Reflect.apply(nativeGet, navigator.credentials, [options]));
+        if (response?.code === "use_browser") {
+          resolve(Reflect.apply(nativeGet, container, [options]));
           return;
         }
         if (!response?.success) {
@@ -73,6 +75,7 @@
       };
       const abort = () => {
         window.removeEventListener(RESPONSE_EVENT, finish);
+        window.dispatchEvent(new CustomEvent(CANCEL_EVENT, { detail: { id } }));
         reject(new DOMException("The operation was aborted", "AbortError"));
       };
 

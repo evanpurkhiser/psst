@@ -85,38 +85,11 @@ Attachments are currently limited to 64 MiB.
 
 ## Passkeys
 
-Passkey sessions can describe a credential and produce a WebAuthn assertion
-without exporting its private key:
+PSST can complete a browser passkey request without exporting its private key.
+The daemon decrypts and uses the key only while producing the requested
+WebAuthn assertion.
 
-```console
-$ psst passkey describe "$session"
-{
-  "credentialId": "...",
-  "rpId": "example.com",
-  "credentialType": "public-key"
-}
-$ jq -nc \
-    --arg origin https://login.example.com \
-    --arg challenge "$CHALLENGE" \
-    --arg rpId example.com \
-    --arg credentialId "$CREDENTIAL_ID" \
-    '{origin, challenge, rpId, allowCredentials: [$credentialId]}' \
-  | psst passkey assert "$session"
-```
-
-The origin and challenge belong to an individual authentication request, so
-`describe` returns the credential's relying-party scope rather than an origin.
-`assert` accepts base64url challenge and credential values. It rejects origins
-outside the stored relying party, mismatched relying-party IDs, and requests
-whose allow list excludes the credential.
-
-The daemon decrypts and uses the private key only while signing. Its response
-contains the browser-facing `PublicKeyCredential` assertion fields; neither the
-CLI nor a browser integration receives private-key material. This deliberately
-provides a constrained WebAuthn operation instead of a general-purpose signing
-command.
-
-### Browser integration
+### Browser setup
 
 Install the bundled Manifest V3 extension and Chrome native-messaging host:
 
@@ -152,27 +125,37 @@ sessions. Register PSST as a launch-mutator plugin in
 Agent Browser's existing `launch.mutate` protocol. It receives no credential,
 session reference, or WebAuthn request.
 
-Open the 1Password share, trigger the site's passkey prompt, then arm the
-pending request:
+Open the 1Password share and trigger the site's passkey action. The extension
+shows **Use PSST** and **Continue with browser**. Choose **Use PSST**, then pass
+the displayed request identifier to `handoff`:
 
 ```console
 $ session="$(printf '%s' "$ONEPASSWORD_SHARE_URL" | psst open)"
 $ trap 'psst close "$session" 2>/dev/null || true' EXIT
 $ agent-browser --session work open https://login.example.com
 # Complete the site's identifier steps and trigger its passkey action.
-$ psst passkey arm "$session"
-# Wait for the existing browser request to complete.
+# Click "Use PSST" in the browser prompt and read its request identifier.
+$ psst passkey handoff "$session" "$request_id"
+# The existing browser request completes without a retry.
 $ psst close "$session"
 $ trap - EXIT
 ```
 
-The extension intercepts `navigator.credentials.get()` and holds the request
-for up to one minute while waiting for an arm. `passkey arm` binds to the newest
-pending request, or to the next request when called before one starts, and
-authorizes one assertion for up to one minute. Equivalent concurrent requests
-from the page share the same assertion. Native WebAuthn remains in use when the
-wait expires or the PSST native host is unavailable. The extension never
-receives the PSST session reference or private key.
+**Continue with browser** immediately passes the original request to Chrome.
+**Use PSST** starts a handoff for that exact request; no native host or daemon
+request is created before that choice. A handoff authorizes its displayed
+identifier once and expires after one minute. Equivalent concurrent requests
+from the page share the same choice and assertion. The extension never receives
+the PSST session reference or private key.
+
+### Low-level assertions
+
+`psst passkey describe` returns the credential's relying-party and credential
+identifiers. `psst passkey assert` accepts a JSON WebAuthn request on standard
+input and writes its assertion as JSON. These commands are intended for a
+non-browser WebAuthn consumer that already owns the request origin and
+challenge. The daemon rejects origins outside the stored relying party,
+mismatched relying-party IDs, and allow lists that exclude the credential.
 
 ## Output safety
 

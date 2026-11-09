@@ -10,7 +10,7 @@ import time
 MAX_MESSAGE_BYTES = 64 * 1024
 EXTENSION_ORIGIN = "chrome-extension://mmehefpkhobgphfjkjlnebgbgfbmmmca/"
 SOCKET_PATH = os.environ.get("PSST_BROWSER_SOCKET", "/run/psst/bridge.sock")
-PENDING_TIMEOUT = 60
+HANDOFF_TIMEOUT = 60
 POLL_INTERVAL = 0.1
 
 
@@ -54,10 +54,10 @@ def request_assertion_once(request):
 
 
 def request_assertion(request):
-    deadline = time.monotonic() + PENDING_TIMEOUT
+    deadline = time.monotonic() + HANDOFF_TIMEOUT
     while True:
         response = request_assertion_once(request)
-        if response.get("code") != "passkey_not_armed":
+        if response.get("code") != "passkey_handoff_required":
             return response
         remaining = deadline - time.monotonic()
         if remaining <= POLL_INTERVAL:
