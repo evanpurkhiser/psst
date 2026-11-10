@@ -12,7 +12,7 @@ explicitly retrieve only the values it needs.
 `psst` requires Linux with a systemd user manager and session D-Bus.
 
 ```console
-$ cargo install --locked --git https://github.com/evanpurkhiser/psst
+$ cargo install --locked psst-cli
 ```
 
 ## Agent workflow
