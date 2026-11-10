@@ -1,11 +1,14 @@
 [package]
-name = "psst"
+name = "psst-cli"
 version = "0.1.0"
 edition = "2024"
 description = "Short-lived, local sessions for 1Password item-sharing links"
 license = "MIT"
 repository = "https://github.com/evanpurkhiser/psst"
+homepage = "https://github.com/evanpurkhiser/psst"
 readme = "README.md"
+keywords = ["cli", "onepassword", "secrets", "security"]
+categories = ["command-line-utilities", "authentication"]
 
 [[bin]]
 name = "psst"
