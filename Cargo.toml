@@ -1,6 +1,6 @@
 [package]
 name = "psst-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Short-lived, local sessions for 1Password item-sharing links"
 license = "MIT"
