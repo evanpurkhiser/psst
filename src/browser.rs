@@ -1,5 +1,6 @@
 use std::{
     env, fs,
+    io::{BufReader, Read},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
@@ -16,8 +17,9 @@ const MANIFEST: &str = include_str!("../browser-extension/manifest.json");
 const BACKGROUND: &str = include_str!("../browser-extension/background.js");
 const RELAY: &str = include_str!("../browser-extension/relay.js");
 const BRIDGE: &str = include_str!("../browser-extension/bridge.js");
-const NATIVE_HOST_PROXY: &str = include_str!("../browser-extension/native-host.py");
 const CONTAINER_ROOT: &str = "/opt/psst";
+const NATIVE_HOST_PROXY: &[u8] =
+    b"#!/bin/sh\nexec /opt/psst/native-host-bin native-host-proxy \"$@\"\n";
 
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +43,8 @@ pub struct BrowserStatus {
     extension_installed: bool,
     native_host_proxy: PathBuf,
     native_host_proxy_installed: bool,
+    native_host_binary: PathBuf,
+    native_host_binary_installed: bool,
     native_host_manifests: Vec<PathBuf>,
     native_host_manifests_installed: bool,
     container_native_host_manifest: PathBuf,
@@ -51,6 +55,7 @@ pub struct BrowserStatus {
 struct BrowserPaths {
     extension: PathBuf,
     native_host_proxy: PathBuf,
+    native_host_binary: PathBuf,
     native_host_manifests: Vec<PathBuf>,
     container_native_host_manifest: PathBuf,
     config: PathBuf,
@@ -68,9 +73,10 @@ pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation
     write_if_changed(paths.extension.join("relay.js"), RELAY.as_bytes())?;
     write_if_changed(paths.extension.join("bridge.js"), BRIDGE.as_bytes())?;
 
-    write_executable_if_changed(&paths.native_host_proxy, NATIVE_HOST_PROXY.as_bytes())?;
-
     let executable = env::current_exe()?.canonicalize()?;
+    write_executable_if_changed(&paths.native_host_proxy, NATIVE_HOST_PROXY)?;
+    copy_executable_if_changed(&executable, &paths.native_host_binary)?;
+
     let native_manifest = serde_json::to_vec_pretty(&json!({
         "name": NATIVE_HOST,
         "description": "psst passkey native messaging host",
@@ -85,7 +91,7 @@ pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation
     let container_manifest = serde_json::to_vec_pretty(&json!({
         "name": NATIVE_HOST,
         "description": "psst passkey native messaging host",
-        "path": format!("{CONTAINER_ROOT}/native-host.py"),
+        "path": format!("{CONTAINER_ROOT}/native-host"),
         "type": "stdio",
         "allowed_origins": [EXTENSION_ORIGIN],
     }))?;
@@ -118,8 +124,10 @@ pub fn status() -> Result<BrowserStatus> {
     Ok(BrowserStatus {
         extension_installed: paths.extension.join("manifest.json").is_file(),
         native_host_proxy_installed: paths.native_host_proxy.is_file(),
+        native_host_binary_installed: paths.native_host_binary.is_file(),
         extension: paths.extension,
         native_host_proxy: paths.native_host_proxy,
+        native_host_binary: paths.native_host_binary,
         native_host_manifests: paths.native_host_manifests,
         native_host_manifests_installed,
         container_native_host_manifest: paths.container_native_host_manifest,
@@ -169,11 +177,64 @@ fn write_executable_if_changed(path: &Path, contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn copy_executable_if_changed(source: &Path, destination: &Path) -> Result<()> {
+    if files_equal(source, destination)? {
+        return Ok(());
+    }
+
+    let parent = destination.parent().ok_or(Error::BrowserInstallPath)?;
+    fs::create_dir_all(parent)?;
+    let temporary = destination.with_extension(format!("tmp-{}", std::process::id()));
+    let result = fs::copy(source, &temporary)
+        .and_then(|_| fs::set_permissions(&temporary, fs::Permissions::from_mode(0o755)))
+        .and_then(|()| fs::rename(&temporary, destination));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result?;
+    Ok(())
+}
+
+fn files_equal(left: &Path, right: &Path) -> Result<bool> {
+    let left_metadata = fs::metadata(left)?;
+    let right_metadata = match fs::metadata(right) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if left_metadata.len() != right_metadata.len() {
+        return Ok(false);
+    }
+
+    let mut left = BufReader::new(fs::File::open(left)?);
+    let mut right = BufReader::new(fs::File::open(right)?);
+    let mut left_buffer = [0_u8; 64 * 1024];
+    let mut right_buffer = [0_u8; 64 * 1024];
+    loop {
+        let left_length = left.read(&mut left_buffer)?;
+        let right_length = right.read(&mut right_buffer)?;
+        if left_length != right_length || left_buffer[..left_length] != right_buffer[..right_length]
+        {
+            return Ok(false);
+        }
+        if left_length == 0 {
+            return Ok(true);
+        }
+    }
+}
+
 fn config_home() -> Result<PathBuf> {
     env::var_os("XDG_CONFIG_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .map_or_else(|| Ok(home_dir()?.join(".config")), Ok)
+}
+
+fn data_home() -> Result<PathBuf> {
+    env::var_os("XDG_DATA_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map_or_else(|| Ok(home_dir()?.join(".local/share")), Ok)
 }
 
 fn home_dir() -> Result<PathBuf> {
@@ -184,15 +245,8 @@ fn home_dir() -> Result<PathBuf> {
 }
 
 fn paths() -> Result<BrowserPaths> {
-    let home = home_dir()?;
-    let data_home = env::var_os("XDG_DATA_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local/share"));
-    let config_home = env::var_os("XDG_CONFIG_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"));
+    let data_home = data_home()?;
+    let config_home = config_home()?;
     let native_host_manifests = ["google-chrome", "google-chrome-for-testing", "chromium"]
         .into_iter()
         .map(|browser| {
@@ -205,7 +259,8 @@ fn paths() -> Result<BrowserPaths> {
 
     Ok(BrowserPaths {
         extension: data_home.join("psst/chrome-extension"),
-        native_host_proxy: data_home.join("psst/native-host.py"),
+        native_host_proxy: data_home.join("psst/native-host"),
+        native_host_binary: data_home.join("psst/native-host-bin"),
         native_host_manifests,
         container_native_host_manifest: data_home
             .join("psst/container-native-host")
@@ -231,5 +286,13 @@ mod tests {
     #[test]
     fn browser_config_defaults_to_no_container_peers() {
         assert!(BrowserConfig::default().allowed_peer_uids.is_empty());
+    }
+
+    #[test]
+    fn container_native_host_invokes_the_rust_proxy() {
+        let proxy = str::from_utf8(NATIVE_HOST_PROXY).unwrap();
+
+        assert!(proxy.contains("native-host-bin native-host-proxy"));
+        assert!(!proxy.contains("python"));
     }
 }

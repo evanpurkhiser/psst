@@ -15,6 +15,7 @@ use std::{
     env,
     io::{BufRead, BufReader, IsTerminal, Read, Write},
     os::unix::net::UnixStream,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
@@ -89,6 +90,9 @@ enum Command {
     /// Serve the Agent Browser plugin protocol over standard input and output.
     #[command(hide = true)]
     AgentBrowserPlugin,
+    /// Proxy Chrome native messages to the restricted container bridge.
+    #[command(hide = true)]
+    NativeHostProxy { origin: String },
     #[command(hide = true)]
     Daemon,
 }
@@ -161,6 +165,7 @@ fn run(command: Command) -> Result<()> {
     match command {
         Command::Daemon => daemon::run(),
         Command::AgentBrowserPlugin => run_agent_browser_plugin(),
+        Command::NativeHostProxy { origin } => run_native_host_proxy(&origin),
         Command::Open => {
             let stdin = std::io::stdin();
             refuse_share_terminal(stdin.is_terminal())?;
@@ -325,6 +330,39 @@ fn run_agent_browser_plugin() -> Result<()> {
 }
 
 fn run_native_host() -> Result<()> {
+    let response = match read_native_message() {
+        Ok(assertion_request) => wait_for_browser_assertion(assertion_request)?,
+        Err(Error::Json(error)) => serde_json::json!({
+            "success": false,
+            "code": "invalid_json",
+            "error": error.to_string(),
+        }),
+        Err(error) => return Err(error),
+    };
+    write_native_message(&response)
+}
+
+fn run_native_host_proxy(origin: &str) -> Result<()> {
+    let response = if !browser::is_extension_origin(origin) {
+        serde_json::json!({
+            "success": false,
+            "code": "browser_bridge_unavailable",
+            "error": "unexpected extension origin",
+        })
+    } else {
+        match read_native_message().and_then(wait_for_bridge_assertion) {
+            Ok(response) => response,
+            Err(error) => serde_json::json!({
+                "success": false,
+                "code": "browser_bridge_unavailable",
+                "error": error.to_string(),
+            }),
+        }
+    };
+    write_native_message(&response)
+}
+
+fn read_native_message() -> Result<webauthn::AssertionRequest> {
     let mut length = [0_u8; 4];
     std::io::stdin().read_exact(&mut length)?;
     let length = u32::from_ne_bytes(length) as usize;
@@ -334,14 +372,10 @@ fn run_native_host() -> Result<()> {
 
     let mut input = Zeroizing::new(vec![0_u8; length]);
     std::io::stdin().read_exact(&mut input)?;
-    let response = match serde_json::from_slice(&input) {
-        Ok(assertion_request) => wait_for_browser_assertion(assertion_request)?,
-        Err(error) => serde_json::json!({
-            "success": false,
-            "code": "invalid_json",
-            "error": error.to_string(),
-        }),
-    };
+    Ok(serde_json::from_slice(&input)?)
+}
+
+fn write_native_message(response: &serde_json::Value) -> Result<()> {
     let encoded = Zeroizing::new(serde_json::to_vec(&response)?);
     let length = u32::try_from(encoded.len())
         .map_err(|_| Error::ResponseSizeLimit("native messaging response"))?;
@@ -350,6 +384,61 @@ fn run_native_host() -> Result<()> {
     stdout.write_all(&encoded)?;
     stdout.flush()?;
     Ok(())
+}
+
+fn wait_for_bridge_assertion(
+    assertion_request: webauthn::AssertionRequest,
+) -> Result<serde_json::Value> {
+    let deadline = Instant::now() + PASSKEY_HANDOFF_TIMEOUT;
+    loop {
+        let response = request_bridge_assertion(&assertion_request)?;
+        if response.get("code").and_then(serde_json::Value::as_str)
+            != Some("passkey_handoff_required")
+        {
+            return Ok(response);
+        }
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining <= PASSKEY_POLL_INTERVAL {
+            thread::sleep(remaining);
+            return Ok(response);
+        }
+
+        thread::sleep(PASSKEY_POLL_INTERVAL);
+    }
+}
+
+fn request_bridge_assertion(
+    assertion_request: &webauthn::AssertionRequest,
+) -> Result<serde_json::Value> {
+    let socket = env::var_os("PSST_BROWSER_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/run/psst/bridge.sock"));
+    request_bridge_assertion_at(assertion_request, &socket)
+}
+
+fn request_bridge_assertion_at(
+    assertion_request: &webauthn::AssertionRequest,
+    socket: &Path,
+) -> Result<serde_json::Value> {
+    let mut stream = UnixStream::connect(socket)?;
+    stream.set_write_timeout(Some(DAEMON_WRITE_TIMEOUT))?;
+    stream.set_read_timeout(Some(DAEMON_READ_TIMEOUT))?;
+
+    let mut encoded = Zeroizing::new(serde_json::to_vec(assertion_request)?);
+    encoded.push(b'\n');
+    stream.write_all(&encoded)?;
+    stream.shutdown(std::net::Shutdown::Write)?;
+
+    let mut response = Zeroizing::new(Vec::new());
+    BufReader::new(stream)
+        .take(MAX_JSON_REQUEST_BYTES as u64 + 1)
+        .read_until(b'\n', &mut response)?;
+    if response.len() > MAX_JSON_REQUEST_BYTES {
+        return Err(Error::ResponseSizeLimit("browser bridge response"));
+    }
+
+    Ok(serde_json::from_slice(&response)?)
 }
 
 fn wait_for_browser_assertion(
@@ -536,6 +625,8 @@ fn write_error(code: &str, message: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::net::UnixListener;
+
     use super::*;
 
     #[test]
@@ -579,5 +670,47 @@ mod tests {
             format!("error cli_usage: {message}")
                 .starts_with("error cli_usage: unrecognized subcommand")
         );
+    }
+
+    #[test]
+    fn native_host_proxy_is_hidden_from_cli_help() {
+        let command =
+            Cli::try_parse_from(["psst", "native-host-proxy", browser::EXTENSION_ORIGIN]).unwrap();
+        assert!(matches!(command.command, Command::NativeHostProxy { .. }));
+
+        let help = match Cli::try_parse_from(["psst", "--help"]) {
+            Ok(_) => panic!("help was parsed as a command"),
+            Err(error) => error.to_string(),
+        };
+        assert!(!help.contains("native-host-proxy"));
+    }
+
+    #[test]
+    fn native_host_proxy_uses_the_restricted_bridge_protocol() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("bridge.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            stream.read_to_string(&mut request).unwrap();
+            let request: webauthn::AssertionRequest = serde_json::from_str(&request).unwrap();
+            assert_eq!(request.origin, "https://example.com");
+            stream
+                .write_all(b"{\"success\":false,\"code\":\"fixture\"}\n")
+                .unwrap();
+        });
+        let request = webauthn::AssertionRequest {
+            request_id: Some("fixture".into()),
+            origin: "https://example.com".into(),
+            challenge: "Y2hhbGxlbmdl".into(),
+            rp_id: Some("example.com".into()),
+            allow_credentials: Vec::new(),
+        };
+
+        let response = request_bridge_assertion_at(&request, &socket).unwrap();
+
+        assert_eq!(response["code"], "fixture");
+        server.join().unwrap();
     }
 }
