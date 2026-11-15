@@ -76,9 +76,12 @@ and offers no arbitrary-byte signing operation.
 
 ## Browser bridge
 
-The Chrome extension forwards the top-level page origin, challenge,
-relying-party ID, and credential allow list through Chrome native messaging
-after the user or browser driver chooses **Use psst**.
+The Chrome extension arms Chrome's Web Authentication proxy after the user
+or browser driver chooses **Use psst**.
+Chrome then serializes the live challenge, relying-party ID,
+and credential allow list for the extension.
+The extension combines them with the top-level page origin
+and forwards the assertion request through Chrome native messaging.
 **Continue with browser** passes the original call to Chrome without contacting
 psst.
 The extension generates a request identifier for the psst choice,
@@ -91,6 +94,10 @@ while the first request is awaiting a choice.
 Conditional mediation requests use this choice
 so browser drivers can request a shared passkey while the login form is active.
 Silent mediation stays native and never creates a psst prompt.
+The proxy is attached only for the selected request and detached
+after completion or cancellation.
+Chrome converts the returned assertion JSON into the native
+`PublicKeyCredential` received by the page.
 
 The Agent Browser plugin implements its existing `launch.mutate` capability
 and returns the installed extension directory for local Chrome launches.

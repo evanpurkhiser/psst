@@ -278,9 +278,21 @@ mod tests {
         let manifest: serde_json::Value = serde_json::from_str(MANIFEST).unwrap();
 
         assert_eq!(manifest["manifest_version"], 3);
-        assert_eq!(manifest["permissions"], json!(["nativeMessaging"]));
+        assert_eq!(
+            manifest["permissions"],
+            json!(["nativeMessaging", "webAuthenticationProxy"])
+        );
+        assert_eq!(manifest["minimum_chrome_version"], "115");
         assert_eq!(manifest["content_scripts"][0]["world"], "ISOLATED");
         assert_eq!(manifest["content_scripts"][1]["world"], "MAIN");
+    }
+
+    #[test]
+    fn bundled_extension_returns_credentials_through_chrome() {
+        assert!(BACKGROUND.contains("webAuthenticationProxy.completeGetRequest"));
+        assert!(BACKGROUND.contains("responseJson: JSON.stringify(response.assertion)"));
+        assert!(BRIDGE.contains("Reflect.apply(nativeGet"));
+        assert!(!BRIDGE.contains("const credential ="));
     }
 
     #[test]
