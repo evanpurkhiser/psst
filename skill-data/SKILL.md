@@ -48,6 +48,10 @@ psst download SESSION_REFERENCE -- FILE_SELECTOR | <consumer>
 Keep the direct pipe intact; never print, inspect, log, summarize,
 or save a returned value unless the user's task explicitly requires a file.
 Retrieve only the fields required for the task.
+An `invalid_totp` error means psst could not interpret the shared field;
+it does not establish that the item is malformed in 1Password.
+The error message identifies the unsupported value shape
+or URI component without including the TOTP secret.
 
 ## Authenticate with a passkey
 

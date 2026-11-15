@@ -2,6 +2,38 @@ use std::io;
 
 use thiserror::Error;
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum TotpError {
+    #[error("the value is not a string")]
+    ValueType,
+    #[error("the system clock is before the Unix epoch")]
+    Clock,
+    #[error("the value is not a valid URI")]
+    Uri,
+    #[error("the URI must use the otpauth://totp scheme")]
+    Scheme,
+    #[error("the URI does not contain a secret")]
+    SecretMissing,
+    #[error("the secret is not valid base32")]
+    SecretEncoding,
+    #[error("the period is not a positive integer")]
+    PeriodFormat,
+    #[error("the digit count is not an integer")]
+    DigitsFormat,
+    #[error("the period must be greater than zero")]
+    PeriodZero,
+    #[error("the digit count must be between 6 and 10")]
+    DigitsRange,
+    #[error("the TOTP key could not be initialized")]
+    Key,
+    #[error("the algorithm must be SHA1, SHA256, or SHA512")]
+    Algorithm,
+    #[error("the TOTP digest was empty")]
+    DigestEmpty,
+    #[error("the TOTP digest was truncated")]
+    DigestTruncated,
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("invalid 1Password share link: {0}")]
@@ -20,8 +52,8 @@ pub enum Error {
     FileRequiresDownload(String),
     #[error("field {0:?} is not a file")]
     FieldNotFile(String),
-    #[error("field {0:?} does not contain a valid TOTP URI")]
-    InvalidTotp(String),
+    #[error("field {field:?} contains an unsupported TOTP value: {reason}")]
+    InvalidTotp { field: String, reason: TotpError },
     #[error("the shared item does not contain a passkey")]
     PasskeyUnavailable,
     #[error("the shared item contains an unsupported passkey")]
@@ -93,7 +125,7 @@ impl Error {
             Self::FieldNotFound(_) => "field_not_found",
             Self::FileRequiresDownload(_) => "field_is_file",
             Self::FieldNotFile(_) => "field_not_file",
-            Self::InvalidTotp(_) => "invalid_totp",
+            Self::InvalidTotp { .. } => "invalid_totp",
             Self::PasskeyUnavailable => "passkey_unavailable",
             Self::UnsupportedPasskey => "passkey_unsupported",
             Self::PasskeyKey => "passkey_key_invalid",

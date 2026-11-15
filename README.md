@@ -85,6 +85,10 @@ Consumers should ignore additional object keys added by a future release.
 `get` writes strings as raw bytes without a trailing newline
 and writes other values as JSON.
 TOTP fields return the current code.
+The parser accepts standard `otpauth://totp` values with a `secret` query
+parameter and 1Password's legacy form with the base32 secret in the URI path.
+Validation errors identify the unsupported URI component without including
+secret material.
 Credit-card expiration fields return `MM/YYYY`.
 File values are available only through `download`,
 which verifies and decrypts the attachment before writing its original bytes.
