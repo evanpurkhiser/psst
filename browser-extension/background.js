@@ -128,7 +128,7 @@ chrome.webAuthenticationProxy.onGetRequest.addListener(requestInfo => {
     if (chrome.runtime.lastError || !response?.success) {
       await fail(
         requestInfo.requestId,
-        response?.error || "The psst native host is unavailable",
+        response?.error || "The psst browser bridge is unavailable",
       );
       return;
     }

@@ -3,3 +3,7 @@ rust = { version = "1.94", components = ["rustfmt", "clippy"] }
 prek = "0.4.9"
 shellcheck = "0.11.0"
 actionlint = "1.7.12"
+
+[tasks.build-browser-bridge]
+description = "Build the container browser bridge for the current architecture"
+run = "./scripts/build-browser-bridge"
