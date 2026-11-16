@@ -8,30 +8,8 @@ pub enum TotpError {
     ValueType,
     #[error("the system clock is before the Unix epoch")]
     Clock,
-    #[error("the value is not a valid URI")]
-    Uri,
-    #[error("the URI must use the otpauth://totp scheme")]
-    Scheme,
-    #[error("the URI does not contain a secret")]
-    SecretMissing,
-    #[error("the secret is not valid base32")]
-    SecretEncoding,
-    #[error("the period is not a positive integer")]
-    PeriodFormat,
-    #[error("the digit count is not an integer")]
-    DigitsFormat,
-    #[error("the period must be greater than zero")]
-    PeriodZero,
-    #[error("the digit count must be between 6 and 10")]
-    DigitsRange,
-    #[error("the TOTP key could not be initialized")]
-    Key,
-    #[error("the algorithm must be SHA1, SHA256, or SHA512")]
-    Algorithm,
-    #[error("the TOTP digest was empty")]
-    DigestEmpty,
-    #[error("the TOTP digest was truncated")]
-    DigestTruncated,
+    #[error(transparent)]
+    Protocol(#[from] totp_rs::TotpError),
 }
 
 #[derive(Debug, Error)]
