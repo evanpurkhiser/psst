@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${PSST_BROWSER_BRIDGE_TARGET:-}" ]; then
+    target="$PSST_BROWSER_BRIDGE_TARGET"
+else
+    architecture="$(rustc -vV | sed -n 's/^host: \([^-]*\).*/\1/p')"
+    case "$architecture" in
+        x86_64 | aarch64)
+            target="${architecture}-unknown-linux-musl"
+            ;;
+        *)
+            echo "unsupported browser-bridge architecture: ${architecture}" >&2
+            exit 2
+            ;;
+    esac
+fi
+
+cargo build --locked --release --package psst-browser-bridge --target "$target"
+printf '%s\n' "target/${target}/release/psst-browser-bridge"

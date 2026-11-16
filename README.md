@@ -95,6 +95,8 @@ Attachments are currently limited to 64 MiB.
 psst can complete a browser passkey request without exporting its private key.
 The daemon decrypts and uses the key only
 while producing the requested WebAuthn assertion.
+Chrome's Web Authentication proxy converts
+that assertion into the native credential returned to the website.
 
 ### Browser setup
 
