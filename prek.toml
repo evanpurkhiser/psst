@@ -18,7 +18,9 @@ hooks = [
   { id = "detect-private-key", priority = 100 },
   { id = "check-json", priority = 100 },
   { id = "check-toml", priority = 100 },
-  { id = "check-yaml", priority = 100 },
+  { id = "check-yaml", args = [
+    "--allow-multiple-documents",
+  ], priority = 100 },
 ]
 
 [[repos]]
@@ -41,5 +43,7 @@ repo = "https://github.com/evanpurkhiser/prek-personal"
 rev = "v1.0.2"
 hooks = [
   { id = "rustfmt-system", priority = 10 },
+  { id = "oxfmt-system", priority = 10 },
   { id = "clippy-system", priority = 11 },
+  { id = "oxlint-system", priority = 11 },
 ]
