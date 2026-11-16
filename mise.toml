@@ -7,3 +7,6 @@ actionlint = "1.7.12"
 [tasks.build-browser-bridge]
 description = "Build the container browser bridge for the current architecture"
 run = "./scripts/build-browser-bridge"
+
+[settings]
+idiomatic_version_file_enable_tools = ["node", "pnpm"]

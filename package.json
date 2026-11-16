@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "psst",
+  "private": true,
+  "license": "MIT",
+  "author": "Evan Purkhiser",
+  "type": "module",
+  "scripts": {
+    "lint": "oxlint browser-extension",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check ."
+  },
+  "devDependencies": {
+    "@evanpurkhiser/oxc-config": "^0.19.0",
+    "oxfmt": "^0.47.0",
+    "oxlint": "^1.62.0"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.9.1"
+    },
+    "runtime": {
+      "name": "node",
+      "version": "^24.15.0"
+    }
+  }
+}
