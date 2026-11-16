@@ -48,6 +48,8 @@ psst download SESSION_REFERENCE -- FILE_SELECTOR | <consumer>
 and `credentialId`.
 Its presence confirms that the session can be used with the passkey commands
 below.
+The stored `credentialId` is metadata,
+not the browser request ID used by `passkey handoff`.
 Passkeys do not have a field selector and cannot be retrieved with `get`.
 
 `get` and `download` refuse terminal output.
@@ -61,22 +63,25 @@ The browser integration must already be installed.
 Trigger the site's normal passkey action.
 The browser displays **Use psst** and **Continue with browser**.
 Conditional mediation may display this choice as soon as the login form loads.
-If the passkey has not been shared,
-ask Evan to share the matching 1Password item before choosing **Use psst**;
-the original browser request remains pending.
-Choose **Use psst**, read the request identifier from its status,
-and hand off that exact request:
+Open and inspect the shared item before choosing **Use psst** when possible.
+If the prompt or site transaction times out while waiting for the share,
+reload the sign-in flow and trigger a new passkey request.
+The prompt exposes a labeled browser request ID before either choice.
+Record it, choose **Use psst**, and hand off that exact request:
 
 ```bash
 # Complete the identifier step or click the site's passkey button.
 psst passkey handoff SESSION_REFERENCE REQUEST_ID
-# The existing browser request finishes without a retry.
+# Success means psst produced the assertion for that browser request.
 ```
 
 **Continue with browser** immediately uses Chrome's normal passkey flow.
-**Use psst** creates a request identifier and starts waiting
+**Use psst** uses the displayed request ID and starts waiting
 for the CLI handoff.
-`psst passkey handoff` authorizes that identifier for one minute.
+`psst passkey handoff` waits for the browser to consume that authorization
+and returns an error when assertion generation or validation fails.
+Verify the site's resulting navigation or signed-in state
+before closing the session.
 After the browser choice, Chrome supplies the live challenge, relying-party ID,
 and credential allow list through its Web Authentication proxy.
 The extension combines them with the live origin
@@ -85,7 +90,8 @@ The daemon validates them and returns the WebAuthn assertion;
 neither the browser extension nor its caller receives the session identifier
 or private key.
 
-**Continue with browser** remains available while the handoff is waiting.
+**Continue with browser** remains available while the chooser is open.
+Choosing it after starting the CLI handoff causes that command to expire.
 If Chrome rejects the completed assertion,
 trigger the site's passkey action again for a new request.
 Each handoff is one-shot, including when its request fails WebAuthn validation.

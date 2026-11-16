@@ -367,6 +367,29 @@ mod tests {
     }
 
     #[test]
+    fn passkey_prompt_exposes_a_stable_browser_request_id() {
+        let relay = include_str!("../browser-extension/relay.js");
+        let generated = relay.find("browserRequestId: crypto.randomUUID()").unwrap();
+        let shown = relay.find("showRequest(activeRequest)").unwrap();
+        let use_psst = relay
+            .split_once("const usePsst = request =>")
+            .unwrap()
+            .1
+            .split_once("const showRequest = request =>")
+            .unwrap()
+            .0;
+
+        assert!(generated < shown);
+        assert!(relay.contains("requestId.value = request.browserRequestId"));
+        assert!(relay.contains("aria-label', 'Browser request ID"));
+        assert!(relay.contains("requestId.readOnly = true"));
+        assert!(!relay.contains("navigator.clipboard"));
+        assert!(use_psst.contains("const requestId = request.browserRequestId"));
+        assert!(!use_psst.contains("closeRequest"));
+        assert!(!use_psst.contains("crypto.randomUUID"));
+    }
+
+    #[test]
     fn browser_config_defaults_to_no_container_peers() {
         assert!(BrowserConfig::default().allowed_peer_uids.is_empty());
     }

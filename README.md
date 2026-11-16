@@ -90,6 +90,7 @@ A shared passkey appears after the normal fields:
 ```
 
 Passkeys do not have a field selector and are used through `psst passkey`.
+The stored `credentialId` is not the browser request ID used by `handoff`.
 
 Selectors are unique and stable for the session;
 duplicate names receive numeric suffixes.
@@ -129,31 +130,33 @@ as described in [Container browsers](docs/container-browsers.md).
 
 Open the 1Password share and trigger the site's passkey action.
 The extension shows **Use psst** and **Continue with browser**.
-Choose **Use psst**, then pass the displayed request identifier to `handoff`:
+The prompt exposes a labeled browser request ID before either choice.
+Record it, choose **Use psst**, then pass it to `handoff`:
 
 ```console
 $ printf '%s' "$ONEPASSWORD_SHARE_URL" | psst open
 OPAQUE_SESSION_REFERENCE
 $ agent-browser --session work open https://login.example.com
 # Complete the site's identifier steps and trigger its passkey action.
-# Click "Use psst" in the browser prompt and read its request identifier.
+# Click "Use psst" and read its browser request ID.
 $ psst passkey handoff OPAQUE_SESSION_REFERENCE REQUEST_ID
-# The existing browser request completes without a retry.
+# Success means psst produced the assertion for that browser request.
 $ psst close OPAQUE_SESSION_REFERENCE
 ```
 
 **Continue with browser** immediately passes the original request to Chrome.
 **Use psst** starts a handoff for that exact request;
 no native host or daemon request is created before that choice.
-A handoff authorizes its displayed identifier once and expires after one minute.
+A handoff authorizes its displayed identifier once,
+waits for the browser to consume it, and expires after one minute.
 Equivalent concurrent requests from the page share the same choice
 and assertion.
-A second distinct request fails
-while the first is awaiting a choice instead of opening an unexpected native
-prompt.
+Each Chrome instance presents one request choice at a time.
+Independent browser instances can complete distinct handoffs concurrently.
 The extension never receives the psst session reference or private key.
-Conditional mediation requests surface the same choice
-so an agent can request a passkey share before the user submits the login form.
+Conditional mediation requests surface the same choice before form submission.
+Open the share first when possible; if the prompt or site transaction expires,
+reload the sign-in flow and trigger a new passkey request.
 Silent mediation remains with Chrome because it cannot require user interaction.
 
 Use `psst browser status` to inspect generated artifact presence

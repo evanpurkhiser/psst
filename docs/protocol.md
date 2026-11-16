@@ -85,12 +85,12 @@ The extension combines them with the top-level page origin
 and forwards the assertion request through Chrome native messaging.
 **Continue with browser** passes the original call to Chrome without contacting
 psst.
-The extension generates a request identifier for the psst choice,
+The extension shows a labeled request identifier before the user chooses psst,
 and `passkey handoff` authorizes only that identifier for one minute.
-The matching assertion consumes the handoff even when WebAuthn validation fails.
+The CLI waits for the matching assertion and reports its failure or completion.
 Equivalent concurrent calls from one page share a choice and assertion.
-A distinct concurrent call receives a busy error
-while the first request is awaiting a choice.
+Each Chrome instance presents one choice at a time,
+while separate browser instances can complete distinct handoffs concurrently.
 
 Conditional mediation requests use this choice
 so browser drivers can request a shared passkey while the login form is active.

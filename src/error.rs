@@ -42,8 +42,10 @@ pub enum Error {
     WebAuthnRequest(String),
     #[error("the browser passkey request has not been handed off to psst")]
     PasskeyHandoffRequired,
-    #[error("another browser passkey handoff is already active")]
+    #[error("the browser passkey request already has a different handoff")]
     PasskeyHandoffBusy,
+    #[error("the browser did not complete the passkey handoff before it expired")]
+    PasskeyHandoffExpired,
     #[error("refusing to write a secret to a terminal; pipe or redirect stdout")]
     SecretToTerminal,
     #[error("refusing to read a share link from a terminal; pipe or redirect stdin")]
@@ -116,6 +118,7 @@ impl Error {
             Self::WebAuthnRequest(_) => "webauthn_request_invalid",
             Self::PasskeyHandoffRequired => "passkey_handoff_required",
             Self::PasskeyHandoffBusy => "passkey_handoff_busy",
+            Self::PasskeyHandoffExpired => "passkey_handoff_expired",
             Self::SecretToTerminal => "secret_to_terminal",
             Self::ShareFromTerminal => "share_from_terminal",
             Self::SessionNotFound(_) => "session_not_found",
@@ -168,6 +171,7 @@ impl Error {
             | "invalid_totp"
             | "passkey_unavailable"
             | "passkey_handoff_busy"
+            | "passkey_handoff_expired"
             | "passkey_handoff_required"
             | "webauthn_request_invalid" => 20,
             "secret_to_terminal" => 21,

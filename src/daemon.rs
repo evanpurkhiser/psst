@@ -22,7 +22,8 @@ use crate::{
     error::{Error, Result},
     item,
     passkey_authorization::{
-        AuthorizationError, AuthorizationOutcome, HandoffError, PasskeyAuthorization,
+        AuthorizationError, AuthorizationOutcome, HandoffError, HandoffFailure, HandoffStatus,
+        PasskeyAuthorization,
     },
     protocol::{Request, Response},
     webauthn::AssertionRequest,
@@ -389,7 +390,10 @@ fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroi
             ref session,
             ref request_id,
         } => {
-            active_session(&state.sessions, session)?;
+            let session_data = active_session(&state.sessions, session)?;
+            let overview = session_data.decrypt_overview()?;
+            let details = session_data.decrypt_details()?;
+            crate::webauthn::Passkey::from_item(&overview, &details)?.validate()?;
             match state
                 .passkey_authorization
                 .handoff(session, request_id, Instant::now())
@@ -401,9 +405,25 @@ fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroi
                         "invalid passkey request identifier".into(),
                     ));
                 }
+                Err(HandoffError::NotFound) => return Err(Error::PasskeyHandoffExpired),
             }
             Ok((Response::PasskeyHandoffReady, None))
         }
+        Request::PasskeyHandoffStatus {
+            ref session,
+            ref request_id,
+        } => match state.passkey_authorization.status(session, request_id) {
+            Ok(HandoffStatus::Pending) => Ok((Response::PasskeyHandoffPending, None)),
+            Ok(HandoffStatus::Complete) => Ok((Response::PasskeyHandoffComplete, None)),
+            Ok(HandoffStatus::Failed(failure)) => Err(Error::Remote {
+                code: failure.code,
+                message: failure.message,
+            }),
+            Err(HandoffError::InvalidRequestId) => Err(Error::WebAuthnRequest(
+                "invalid passkey request identifier".into(),
+            )),
+            Err(HandoffError::NotFound | HandoffError::Busy) => Err(Error::PasskeyHandoffExpired),
+        },
         Request::PasskeyBrowserAssert { ref request } => {
             let outcome = state
                 .passkey_authorization
@@ -413,19 +433,35 @@ fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroi
                         Error::WebAuthnRequest("invalid passkey request identifier".into())
                     }
                 })?;
-            let AuthorizationOutcome::Authorized(session_id) = outcome else {
+            let AuthorizationOutcome::Authorized {
+                session: session_id,
+                request_id,
+            } = outcome
+            else {
                 return Err(Error::PasskeyHandoffRequired);
             };
-            let session = active_session(&state.sessions, session_id.as_str())?;
-            let overview = session.decrypt_overview()?;
-            let details = session.decrypt_details()?;
-            let passkey = crate::webauthn::Passkey::from_item(&overview, &details)?;
-            Ok((
-                Response::PasskeyAssertion {
-                    assertion: passkey.assert(request)?,
-                },
-                None,
-            ))
+            let assertion = (|| {
+                let session = active_session(&state.sessions, session_id.as_str())?;
+                let overview = session.decrypt_overview()?;
+                let details = session.decrypt_details()?;
+                crate::webauthn::Passkey::from_item(&overview, &details)?.assert(request)
+            })();
+            match assertion {
+                Ok(assertion) => {
+                    state.passkey_authorization.complete(&request_id, None);
+                    Ok((Response::PasskeyAssertion { assertion }, None))
+                }
+                Err(error) => {
+                    state.passkey_authorization.complete(
+                        &request_id,
+                        Some(HandoffFailure {
+                            code: error.code().into(),
+                            message: error.to_string(),
+                        }),
+                    );
+                    Err(error)
+                }
+            }
         }
         Request::Close { ref session } => {
             state
