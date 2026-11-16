@@ -5,27 +5,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use psst::{EXTENSION_ORIGIN, NATIVE_HOST};
+use psst::{EXTENSION_ID, EXTENSION_ORIGIN, NATIVE_HOST};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::error::{Error, Result};
 
-const MANIFEST: &str = include_str!("../browser-extension/manifest.json");
-const BACKGROUND: &str = include_str!("../browser-extension/background.js");
-const RELAY: &str = include_str!("../browser-extension/relay.js");
-const BRIDGE: &str = include_str!("../browser-extension/bridge.js");
 const CONTAINER_ROOT: &str = "/opt/psst";
+const CONTAINER_EXTENSION_CRX: &str = "/opt/psst/chrome-extension.crx";
 const NATIVE_HOST_PROXY: &[u8] = b"#!/bin/sh\nexec /opt/psst/browser-bridge \"$@\"\n";
 
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserConfig {
     pub allowed_peer_uids: Vec<u32>,
-}
-
-pub struct Installation {
-    pub extension: PathBuf,
 }
 
 #[derive(Clone, Copy)]
@@ -37,60 +30,49 @@ pub enum PeerConfiguration<'a> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserStatus {
-    extension: PathBuf,
-    extension_installed: bool,
     native_host_proxy: PathBuf,
     native_host_proxy_installed: bool,
     browser_bridge: PathBuf,
     browser_bridge_installed: bool,
-    native_host_manifests: Vec<PathBuf>,
-    native_host_manifests_installed: bool,
+    browser_extension_crx: PathBuf,
+    browser_extension_crx_installed: bool,
     container_native_host_manifest: PathBuf,
     container_native_host_manifest_installed: bool,
+    container_external_extension_manifest: PathBuf,
+    container_external_extension_manifest_installed: bool,
     allowed_peer_uids: Vec<u32>,
 }
 
 struct BrowserPaths {
-    extension: PathBuf,
+    legacy_extension: PathBuf,
+    legacy_native_host_manifests: Vec<PathBuf>,
     native_host_proxy: PathBuf,
     browser_bridge: PathBuf,
-    native_host_manifests: Vec<PathBuf>,
+    browser_extension_crx: PathBuf,
     container_native_host_manifest: PathBuf,
+    container_external_extension_manifest: PathBuf,
     config: PathBuf,
 }
 
-pub fn is_extension_origin(value: &str) -> bool {
-    value == EXTENSION_ORIGIN || value == EXTENSION_ORIGIN.trim_end_matches('/')
-}
-
-pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation> {
+pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<()> {
     let paths = paths()?;
     let allowed_peer_uids = match peer_configuration {
         PeerConfiguration::Preserve => config()?.allowed_peer_uids,
         PeerConfiguration::Replace(allowed_peer_uids) => allowed_peer_uids.to_vec(),
     };
 
-    write_if_changed(paths.extension.join("manifest.json"), MANIFEST.as_bytes())?;
-    write_if_changed(paths.extension.join("background.js"), BACKGROUND.as_bytes())?;
-    write_if_changed(paths.extension.join("relay.js"), RELAY.as_bytes())?;
-    write_if_changed(paths.extension.join("bridge.js"), BRIDGE.as_bytes())?;
-
-    let executable = env::current_exe()?.canonicalize()?;
-    let native_manifest = serde_json::to_vec_pretty(&json!({
-        "name": NATIVE_HOST,
-        "description": "psst passkey native messaging host",
-        "path": executable,
-        "type": "stdio",
-        "allowed_origins": [EXTENSION_ORIGIN],
-    }))?;
-    for manifest in &paths.native_host_manifests {
-        write_if_changed(manifest.clone(), &native_manifest)?;
+    remove_directory_if_exists(&paths.legacy_extension)?;
+    for manifest in &paths.legacy_native_host_manifests {
+        remove_file_if_exists(manifest)?;
     }
 
     if !allowed_peer_uids.is_empty() {
+        let executable = env::current_exe()?.canonicalize()?;
         let browser_bridge_executable = browser_bridge_executable(&executable)?;
+        let browser_extension_crx = browser_extension_crx(&executable)?;
         write_executable_if_changed(&paths.native_host_proxy, NATIVE_HOST_PROXY)?;
         copy_executable_if_changed(&browser_bridge_executable, &paths.browser_bridge)?;
+        copy_file_if_changed(&browser_extension_crx, &paths.browser_extension_crx, 0o644)?;
 
         let container_manifest = serde_json::to_vec_pretty(&json!({
             "name": NATIVE_HOST,
@@ -103,6 +85,15 @@ pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation
             paths.container_native_host_manifest.clone(),
             &container_manifest,
         )?;
+
+        let external_extension_manifest = serde_json::to_vec_pretty(&json!({
+            "external_crx": CONTAINER_EXTENSION_CRX,
+            "external_version": env!("CARGO_PKG_VERSION"),
+        }))?;
+        write_if_changed(
+            paths.container_external_extension_manifest.clone(),
+            &external_extension_manifest,
+        )?;
     }
 
     if matches!(peer_configuration, PeerConfiguration::Replace(_)) {
@@ -110,31 +101,27 @@ pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation
         write_if_changed(paths.config, &serde_json::to_vec_pretty(&config)?)?;
     }
 
-    Ok(Installation {
-        extension: paths.extension,
-    })
+    Ok(())
 }
 
 pub fn status() -> Result<BrowserStatus> {
     let paths = paths()?;
     let browser_config = config()?;
-    let native_host_manifests_installed = paths
-        .native_host_manifests
-        .iter()
-        .all(|path| path.is_file());
     let container_native_host_manifest_installed = paths.container_native_host_manifest.is_file();
+    let container_external_extension_manifest_installed =
+        paths.container_external_extension_manifest.is_file();
 
     Ok(BrowserStatus {
-        extension_installed: paths.extension.join("manifest.json").is_file(),
         native_host_proxy_installed: paths.native_host_proxy.is_file(),
         browser_bridge_installed: paths.browser_bridge.is_file(),
-        extension: paths.extension,
+        browser_extension_crx_installed: paths.browser_extension_crx.is_file(),
         native_host_proxy: paths.native_host_proxy,
         browser_bridge: paths.browser_bridge,
-        native_host_manifests: paths.native_host_manifests,
-        native_host_manifests_installed,
+        browser_extension_crx: paths.browser_extension_crx,
         container_native_host_manifest: paths.container_native_host_manifest,
         container_native_host_manifest_installed,
+        container_external_extension_manifest: paths.container_external_extension_manifest,
+        container_external_extension_manifest_installed,
         allowed_peer_uids: browser_config.allowed_peer_uids,
     })
 }
@@ -180,7 +167,27 @@ fn write_executable_if_changed(path: &Path, contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn remove_directory_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn copy_executable_if_changed(source: &Path, destination: &Path) -> Result<()> {
+    copy_file_if_changed(source, destination, 0o755)
+}
+
+fn copy_file_if_changed(source: &Path, destination: &Path, mode: u32) -> Result<()> {
     if files_equal(source, destination)? {
         return Ok(());
     }
@@ -189,7 +196,7 @@ fn copy_executable_if_changed(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(parent)?;
     let temporary = destination.with_extension(format!("tmp-{}", std::process::id()));
     let result = fs::copy(source, &temporary)
-        .and_then(|_| fs::set_permissions(&temporary, fs::Permissions::from_mode(0o755)))
+        .and_then(|_| fs::set_permissions(&temporary, fs::Permissions::from_mode(mode)))
         .and_then(|()| fs::rename(&temporary, destination));
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -204,6 +211,25 @@ fn browser_bridge_executable(executable: &Path) -> Result<PathBuf> {
         .map(Path::new);
 
     resolve_browser_bridge_executable(executable, configured)
+}
+
+fn browser_extension_crx(executable: &Path) -> Result<PathBuf> {
+    let configured = option_env!("PSST_BROWSER_EXTENSION_PATH")
+        .filter(|path| !path.is_empty())
+        .map(Path::new);
+
+    resolve_browser_extension_crx(executable, configured)
+}
+
+fn resolve_browser_extension_crx(executable: &Path, configured: Option<&Path>) -> Result<PathBuf> {
+    let browser_extension = configured
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| executable.with_file_name("psst-chrome-extension.crx"));
+    if !browser_extension.is_file() {
+        return Err(Error::BrowserExtensionUnavailable(browser_extension));
+    }
+
+    Ok(browser_extension.canonicalize()?)
 }
 
 fn resolve_browser_bridge_executable(
@@ -272,7 +298,7 @@ fn home_dir() -> Result<PathBuf> {
 fn paths() -> Result<BrowserPaths> {
     let data_home = data_home()?;
     let config_home = config_home()?;
-    let native_host_manifests = ["google-chrome", "google-chrome-for-testing", "chromium"]
+    let legacy_native_host_manifests = ["google-chrome", "google-chrome-for-testing", "chromium"]
         .into_iter()
         .map(|browser| {
             config_home
@@ -283,13 +309,17 @@ fn paths() -> Result<BrowserPaths> {
         .collect();
 
     Ok(BrowserPaths {
-        extension: data_home.join("psst/chrome-extension"),
+        legacy_extension: data_home.join("psst/chrome-extension"),
+        legacy_native_host_manifests,
         native_host_proxy: data_home.join("psst/native-host"),
         browser_bridge: data_home.join("psst/browser-bridge"),
-        native_host_manifests,
+        browser_extension_crx: data_home.join("psst/chrome-extension.crx"),
         container_native_host_manifest: data_home
             .join("psst/container-native-host")
             .join(format!("{NATIVE_HOST}.json")),
+        container_external_extension_manifest: data_home
+            .join("psst/container-external-extension")
+            .join(format!("{EXTENSION_ID}.json")),
         config: config_home.join("psst/browser.json"),
     })
 }
@@ -299,10 +329,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundled_extension_manifest_has_the_native_messaging_boundary() {
-        let manifest: serde_json::Value = serde_json::from_str(MANIFEST).unwrap();
+    fn extension_manifest_has_the_native_messaging_boundary() {
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../browser-extension/manifest.json")).unwrap();
 
         assert_eq!(manifest["manifest_version"], 3);
+        assert_eq!(manifest["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(
             manifest["permissions"],
             json!(["nativeMessaging", "webAuthenticationProxy"])
@@ -313,16 +345,45 @@ mod tests {
     }
 
     #[test]
-    fn bundled_extension_returns_credentials_through_chrome() {
-        assert!(BACKGROUND.contains("webAuthenticationProxy.completeGetRequest"));
-        assert!(BACKGROUND.contains("responseJson: JSON.stringify(response.assertion)"));
-        assert!(BRIDGE.contains("Reflect.apply(nativeGet"));
-        assert!(!BRIDGE.contains("const credential ="));
+    fn container_extension_manifest_uses_the_packaged_extension_id() {
+        assert_eq!(
+            EXTENSION_ORIGIN,
+            format!("chrome-extension://{EXTENSION_ID}/")
+        );
+    }
+
+    #[test]
+    fn extension_returns_credentials_through_chrome() {
+        let background = include_str!("../browser-extension/background.js");
+        let bridge = include_str!("../browser-extension/bridge.js");
+
+        assert!(background.contains("webAuthenticationProxy.completeGetRequest"));
+        assert!(background.contains("responseJson: JSON.stringify(response.assertion)"));
+        assert!(bridge.contains("Reflect.apply(nativeGet"));
+        assert!(!bridge.contains("const credential ="));
     }
 
     #[test]
     fn browser_config_defaults_to_no_container_peers() {
         assert!(BrowserConfig::default().allowed_peer_uids.is_empty());
+    }
+
+    #[test]
+    fn legacy_installation_removal_is_idempotent() {
+        let directory = tempfile::tempdir().unwrap();
+        let extension = directory.path().join("chrome-extension");
+        let manifest = directory.path().join("native-host.json");
+        fs::create_dir(&extension).unwrap();
+        fs::write(extension.join("manifest.json"), []).unwrap();
+        fs::write(&manifest, []).unwrap();
+
+        remove_directory_if_exists(&extension).unwrap();
+        remove_file_if_exists(&manifest).unwrap();
+        remove_directory_if_exists(&extension).unwrap();
+        remove_file_if_exists(&manifest).unwrap();
+
+        assert!(!extension.exists());
+        assert!(!manifest.exists());
     }
 
     #[test]
@@ -357,6 +418,20 @@ mod tests {
         assert_eq!(
             resolve_browser_bridge_executable(&executable, Some(&browser_bridge)).unwrap(),
             browser_bridge.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn browser_extension_uses_the_configured_build_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("bin/psst");
+        let browser_extension = directory.path().join("share/psst/extension.crx");
+        fs::create_dir_all(browser_extension.parent().unwrap()).unwrap();
+        fs::write(&browser_extension, []).unwrap();
+
+        assert_eq!(
+            resolve_browser_extension_crx(&executable, Some(&browser_extension)).unwrap(),
+            browser_extension.canonicalize().unwrap()
         );
     }
 }

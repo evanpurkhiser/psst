@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "psst Passkeys",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Completes WebAuthn assertions authorized by a psst session.",
   "minimum_chrome_version": "115",
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtqMDAF8j8RGJxMGxaUkQks6aS1l1/lLrtk1I+Zc5t71CJMfF0/dzhbEvoQajTrOOC+KzXICQuSuO34CdEyf4HogC1/XK1YcDhqrWwVkej+9HBCbcSBaiiSECa7ab+LmXP/JaElF9DYRg/JDAozpPE5NeBFLWzyVCmKCmicRX2tE0GnOsE9noALb58RVqTdp4JBCgBjajTQembjZi7nyQCSXVVEZQYzdl/MAzXFNIt7gm4paSMbDORTkKwTO/OLAsD3XJATi3Os+7LHMD30dgj1aFsrfdjGPewm2YAEGLMkSpAHkKObM6oNrXD2JOoCAxPiyhKlXSsslFVGhd+tMOGQIDAQAB",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwoMWbYblwLpL7UKUlCQM2Z5g50ytD7nwPaRAtZvPumAoN8nEOsaXWG+c1Hr66/2bU4M7zIK9sgfbBJgczy+mYseO1kkS/1j6oXgOWd3C0+urJD7ChIEZcMxKxCDjZ+KlIjd5Jip7ZzuT8SMcP1+6I8+rpEVc9u+wZKjKpu7IVUtnasvNT+tv4D1hGTUtHUWMW3BdUZKpAJm1qCX1PUiu4Avh8ugue4ONJ2d95m52Ep/heqZktKinti0fdWA0In3ijW5rdTOgIkfWIK5uDO+LpjFZTabaQUlHtqSXVh/wmkREa23J2mpZPVEEKkoJoYEGAb41KewBjxcKaoSuq2acoQIDAQAB",
   "permissions": ["nativeMessaging", "webAuthenticationProxy"],
   "background": {
     "service_worker": "background.js"

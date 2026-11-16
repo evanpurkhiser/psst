@@ -64,7 +64,11 @@ jobs:
       - name: Bump package version
         env:
           VERSION: ${{ inputs.version }}
-        run: cargo set-version --workspace "$VERSION"
+        run: |
+          cargo set-version --workspace "$VERSION"
+          jq --arg version "$VERSION" '.version = $version' \
+            browser-extension/manifest.json > browser-extension/manifest.json.tmp
+          mv browser-extension/manifest.json.tmp browser-extension/manifest.json
 
       - name: Refresh lockfile metadata
         run: cargo metadata --format-version=1 > /dev/null
@@ -72,7 +76,7 @@ jobs:
       - name: Commit and push release
         uses: evanpurkhiser/workflows/actions/commit-and-push@main
         with:
-          stage-script: git add Cargo.toml Cargo.lock crates/*/Cargo.toml
+          stage-script: git add Cargo.toml Cargo.lock crates/*/Cargo.toml browser-extension/manifest.json
           branch: main
           commit-message: release v${{ inputs.version }}
           tag: v${{ inputs.version }}

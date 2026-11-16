@@ -62,6 +62,8 @@ pub enum Error {
     BrowserInstallPath,
     #[error("the browser bridge executable was not found at {0}")]
     BrowserBridgeUnavailable(PathBuf),
+    #[error("the Chrome extension package was not found at {0}")]
+    BrowserExtensionUnavailable(PathBuf),
     #[error("the browser bridge rejected peer UID {0}")]
     BrowserPeer(u32),
     #[error("$XDG_RUNTIME_DIR is not owned by the current user or has unsafe permissions")]
@@ -120,6 +122,7 @@ impl Error {
             Self::HomeDirectory => "home_directory_missing",
             Self::BrowserInstallPath => "browser_install_path_invalid",
             Self::BrowserBridgeUnavailable(_) => "browser_bridge_unavailable",
+            Self::BrowserExtensionUnavailable(_) => "browser_extension_unavailable",
             Self::BrowserPeer(_) => "browser_peer_unauthorized",
             Self::UnsafeRuntimeDirectory => "runtime_directory_unsafe",
             Self::UnsafeSocket => "socket_unsafe",
