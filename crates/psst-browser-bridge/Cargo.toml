@@ -1,6 +1,6 @@
 [package]
 name = "psst-browser-bridge"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 description = "Container browser bridge for psst"
 license = "MIT"
