@@ -108,11 +108,6 @@ If Chrome rejects the completed assertion,
 trigger the site's passkey action again for a new request.
 Each handoff is one-shot, including when its request fails WebAuthn validation.
 
-`psst passkey assert` is the lower-level interface
-for a non-browser WebAuthn consumer that already has the request's origin
-and challenge.
-Prefer the browser integration for website authentication.
-
 ## Setup commands
 
 Normal handoffs do not reinstall browser files.

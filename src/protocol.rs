@@ -3,63 +3,34 @@ use zeroize::Zeroize;
 
 use crate::{
     item::{ItemSummary, SecretValue},
-    webauthn::{Assertion, AssertionRequest, CredentialSummary},
+    webauthn::{Assertion, AssertionRequest},
 };
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Request {
-    Open {
-        url: String,
-    },
-    Fields {
-        session: String,
-    },
-    Get {
-        session: String,
-        field: String,
-    },
-    Download {
-        session: String,
-        field: String,
-    },
-    PasskeyDescribe {
-        session: String,
-    },
-    PasskeyAssert {
-        session: String,
-        request: AssertionRequest,
-    },
-    PasskeyHandoff {
-        session: String,
-        request_id: String,
-    },
-    PasskeyHandoffStatus {
-        session: String,
-        request_id: String,
-    },
-    PasskeyBrowserAssert {
-        request: AssertionRequest,
-    },
-    Close {
-        session: String,
-    },
+    Open { url: String },
+    Fields { session: String },
+    Get { session: String, field: String },
+    Download { session: String, field: String },
+    PasskeyHandoff { session: String, request_id: String },
+    PasskeyHandoffStatus { session: String, request_id: String },
+    PasskeyBrowserAssert { request: AssertionRequest },
+    Close { session: String },
 }
 
 impl Drop for Request {
     fn drop(&mut self) {
         match self {
             Self::Open { url } => url.zeroize(),
-            Self::Fields { session }
-            | Self::PasskeyDescribe { session }
-            | Self::Close { session } => session.zeroize(),
+            Self::Fields { session } | Self::Close { session } => session.zeroize(),
             Self::Get { session, field } | Self::Download { session, field } => {
                 session.zeroize();
                 field.zeroize();
             }
-            Self::PasskeyAssert { session, .. }
-            | Self::PasskeyHandoff { session, .. }
-            | Self::PasskeyHandoffStatus { session, .. } => session.zeroize(),
+            Self::PasskeyHandoff { session, .. } | Self::PasskeyHandoffStatus { session, .. } => {
+                session.zeroize()
+            }
             Self::PasskeyBrowserAssert { .. } => {}
         }
     }
@@ -72,7 +43,6 @@ pub enum Response {
     Fields { fields: Vec<ItemSummary> },
     Secret { value: SecretValue },
     Attachment { size: u64 },
-    PasskeyCredential { credential: CredentialSummary },
     PasskeyAssertion { assertion: Assertion },
     PasskeyHandoffReady,
     PasskeyHandoffPending,

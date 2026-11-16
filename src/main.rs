@@ -29,7 +29,6 @@ use crate::{
 };
 
 const MAX_SHARE_LINK_BYTES: usize = 4 * 1024;
-const MAX_JSON_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_DAEMON_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const DAEMON_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const DAEMON_READ_TIMEOUT: Duration = Duration::from_secs(20);
@@ -91,16 +90,6 @@ enum Command {
 
 #[derive(Subcommand)]
 enum PasskeyCommand {
-    /// Write the passkey's relying-party and credential identifiers as JSON.
-    Describe {
-        /// Opaque identifier returned by `psst open`.
-        session: String,
-    },
-    /// Read a WebAuthn request from stdin and write a signed assertion as JSON.
-    Assert {
-        /// Opaque identifier returned by `psst open`.
-        session: String,
-    },
     /// Complete one browser passkey request and wait for its result.
     Handoff {
         /// Opaque identifier returned by `psst open`.
@@ -213,42 +202,6 @@ fn run(command: Command) -> Result<()> {
 
 fn run_passkey(command: PasskeyCommand) -> Result<()> {
     match command {
-        PasskeyCommand::Describe { session } => {
-            match request(Request::PasskeyDescribe { session })? {
-                Response::PasskeyCredential { credential } => {
-                    let stdout = std::io::stdout();
-                    let mut stdout = stdout.lock();
-                    serde_json::to_writer_pretty(&mut stdout, &credential)?;
-                    writeln!(stdout)?;
-                    Ok(())
-                }
-                response => unexpected(response),
-            }
-        }
-        PasskeyCommand::Assert { session } => {
-            let mut input = Zeroizing::new(Vec::new());
-            std::io::stdin()
-                .take(MAX_JSON_REQUEST_BYTES as u64 + 1)
-                .read_to_end(&mut input)?;
-            if input.len() > MAX_JSON_REQUEST_BYTES {
-                return Err(Error::InputSizeLimit("passkey assertion request"));
-            }
-            let assertion_request = serde_json::from_slice(&input)?;
-
-            match request(Request::PasskeyAssert {
-                session,
-                request: assertion_request,
-            })? {
-                Response::PasskeyAssertion { assertion } => {
-                    let stdout = std::io::stdout();
-                    let mut stdout = stdout.lock();
-                    serde_json::to_writer(&mut stdout, &assertion)?;
-                    writeln!(stdout)?;
-                    Ok(())
-                }
-                response => unexpected(response),
-            }
-        }
         PasskeyCommand::Handoff {
             session,
             request_id,
@@ -485,5 +438,25 @@ mod tests {
             format!("error cli_usage: {message}")
                 .starts_with("error cli_usage: unrecognized subcommand")
         );
+    }
+
+    #[test]
+    fn passkeys_use_the_browser_handoff_flow() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "psst",
+                "passkey",
+                "handoff",
+                "session",
+                "410e26bd-7701-4481-8b7e-9f4215edbd8d"
+            ]),
+            Ok(Cli {
+                command: Command::Passkey {
+                    command: PasskeyCommand::Handoff { .. }
+                }
+            })
+        ));
+        assert!(Cli::try_parse_from(["psst", "passkey", "describe", "session"]).is_err());
+        assert!(Cli::try_parse_from(["psst", "passkey", "assert", "session"]).is_err());
     }
 }

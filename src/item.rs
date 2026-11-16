@@ -459,7 +459,6 @@ mod tests {
             Some(CredentialSummary {
                 credential_id: "Y3JlZGVudGlhbA".into(),
                 rp_id: "example.com".into(),
-                credential_type: "public-key".into(),
             }),
         )
         .expect("valid item details");

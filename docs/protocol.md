@@ -59,11 +59,10 @@ and P-256 private key in the encrypted details.
 Shared items encode it as a hex scalar or a base64url-wrapped JSON Web Key;
 psst normalizes both inside the daemon.
 
-`passkey describe` returns only the relying-party ID, credential ID,
-and credential type.
-For `passkey assert`, the daemon validates the requested HTTPS origin against
-the stored relying-party ID, confirms the optional relying-party ID and
-credential allow list, and creates `clientDataJSON` and authenticator data.
+For a browser assertion,
+the daemon validates the requested HTTPS origin against the stored relying-party
+ID, confirms the optional relying-party ID and credential allow list, and
+creates `clientDataJSON` and authenticator data.
 It signs the authenticator data and SHA-256 client-data hash with ES256
 and returns a WebAuthn assertion.
 The assertion uses a zero signature counter,
