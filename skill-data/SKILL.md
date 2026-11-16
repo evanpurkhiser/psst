@@ -69,6 +69,20 @@ Keep the direct pipe intact; never print, inspect, log, summarize,
 or save a returned value unless the user's task explicitly requires a file.
 Retrieve only the fields required for the task.
 
+For a browser login, use psst
+as an Agent Browser credential provider instead of retrieving username
+and password into shell variables:
+
+```bash
+agent-browser --session BROWSER_SESSION auth login LOGIN_NAME \
+  --credential-provider psst --item SESSION_REFERENCE \
+  --url https://identity.example.com/login --no-navigate
+```
+
+This requires `psst integration install agent-browser` during initial setup.
+The provider sends credentials directly to Agent Browser over its plugin pipe;
+they do not enter command arguments or normal output.
+
 ## Authenticate with a passkey
 
 The browser integration must already be installed.
