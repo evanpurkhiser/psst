@@ -15,11 +15,11 @@ The fragment stays on the recipient and is never included in an HTTP request.
 The client derives three values with HKDF-SHA256, an empty salt,
 and distinct `info` values:
 
-| Purpose | `info` | Length | Encoding |
-| --- | --- | ---: | --- |
-| Record locator | `share_item_uuid` | 16 bytes | lowercase Base32, no padding |
-| Retrieval token | `share_item_token` | 16 bytes | lowercase Base32, no padding |
-| Item key | `share_item_encryption_key` | 32 bytes | raw bytes |
+| Purpose         | `info`                      |   Length | Encoding                     |
+| --------------- | --------------------------- | -------: | ---------------------------- |
+| Record locator  | `share_item_uuid`           | 16 bytes | lowercase Base32, no padding |
+| Retrieval token | `share_item_token`          | 16 bytes | lowercase Base32, no padding |
+| Item key        | `share_item_encryption_key` | 32 bytes | raw bytes                    |
 
 ## Retrieval and decryption
 

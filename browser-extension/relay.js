@@ -1,57 +1,63 @@
-const REQUEST_EVENT = "psst-passkey-request";
-const RESPONSE_EVENT = "psst-passkey-response";
-const CANCEL_EVENT = "psst-passkey-cancel";
-const PROXY_READY_EVENT = "psst-passkey-proxy-ready";
-const PROXY_SETTLED_EVENT = "psst-passkey-proxy-settled";
-const FALLBACK_EVENT = "psst-passkey-fallback";
+const REQUEST_EVENT = 'psst-passkey-request';
+const RESPONSE_EVENT = 'psst-passkey-response';
+const CANCEL_EVENT = 'psst-passkey-cancel';
+const PROXY_READY_EVENT = 'psst-passkey-proxy-ready';
+const PROXY_SETTLED_EVENT = 'psst-passkey-proxy-settled';
+const FALLBACK_EVENT = 'psst-passkey-fallback';
 
 let activeRequest;
 
 const failureMessage = response => {
-  if (["native_host_unavailable", "browser_bridge_unavailable"].includes(response?.code)) {
-    return "psst is not ready. Open a psst session, then try again.";
+  if (
+    ['native_host_unavailable', 'browser_bridge_unavailable'].includes(response?.code)
+  ) {
+    return 'psst is not ready. Open a psst session, then try again.';
   }
-  if (response?.code === "browser_peer_unauthorized") {
+  if (response?.code === 'browser_peer_unauthorized') {
     return (
-      "This browser is not authorized for psst. " +
-      "Inspect psst browser status and install its peer UID."
+      'This browser is not authorized for psst. ' +
+      'Inspect psst browser status and install its peer UID.'
     );
   }
-  if (response?.code === "passkey_handoff_required") {
-    return "The psst handoff expired. Try psst again or continue with browser.";
+  if (response?.code === 'passkey_handoff_required') {
+    return 'The psst handoff expired. Try psst again or continue with browser.';
   }
 
-  return response?.error || "The psst handoff failed";
+  return response?.error || 'The psst handoff failed';
 };
 
 const respond = (ids, response) => {
   for (const id of ids) {
-    window.dispatchEvent(new CustomEvent(RESPONSE_EVENT, { detail: { id, response } }));
+    window.dispatchEvent(new CustomEvent(RESPONSE_EVENT, {detail: {id, response}}));
   }
 };
 
 const closeRequest = request => {
   request.host.remove();
-  if (activeRequest === request) activeRequest = undefined;
-  if (request.previousFocus?.isConnected) request.previousFocus.focus();
+  if (activeRequest === request) {
+    activeRequest = undefined;
+  }
+  if (request.previousFocus?.isConnected) {
+    request.previousFocus.focus();
+  }
 };
 
 const useBrowser = async request => {
   const [id] = request.ids;
   if (request.handoffId) {
-    window.dispatchEvent(new CustomEvent(FALLBACK_EVENT, { detail: { id } }));
+    window.dispatchEvent(new CustomEvent(FALLBACK_EVENT, {detail: {id}}));
     try {
       await chrome.runtime.sendMessage({
-        type: "psst.webauthn.cancel",
+        type: 'psst.webauthn.cancel',
         requestId: request.handoffId,
       });
-    } catch (_) {
+    } catch {
       // The native browser flow can still proceed if the worker was unloaded.
     }
   }
 
   closeRequest(request);
-  respond(request.ids, { code: "use_browser" });
+  respond(request.ids, {code: 'use_browser'});
 };
 
 const usePsst = request => {
@@ -63,36 +69,40 @@ const usePsst = request => {
 
   chrome.runtime
     .sendMessage({
-      type: "psst.webauthn.arm",
+      type: 'psst.webauthn.arm',
       requestId,
       request: request.request,
     })
     .then(response => {
-      if (activeRequest !== request || request.ids.size === 0) return;
+      if (activeRequest !== request || request.ids.size === 0) {
+        return;
+      }
       if (response?.success) {
         const [id] = request.ids;
-        window.dispatchEvent(new CustomEvent(PROXY_READY_EVENT, { detail: { id } }));
+        window.dispatchEvent(new CustomEvent(PROXY_READY_EVENT, {detail: {id}}));
         return;
       }
 
       request.psst.disabled = false;
-      request.psst.textContent = "Try psst again";
+      request.psst.textContent = 'Try psst again';
       request.status.textContent = failureMessage(response);
       request.psst.focus();
     })
     .catch(() => {
-      if (activeRequest !== request || request.ids.size === 0) return;
+      if (activeRequest !== request || request.ids.size === 0) {
+        return;
+      }
       request.psst.disabled = false;
-      request.psst.textContent = "Try psst again";
-      request.status.textContent = "The psst browser integration is unavailable";
+      request.psst.textContent = 'Try psst again';
+      request.status.textContent = 'The psst browser integration is unavailable';
       request.psst.focus();
     });
 };
 
 const showRequest = request => {
-  const host = document.createElement("psst-passkey-request");
-  const shadow = host.attachShadow({ mode: "closed" });
-  const style = document.createElement("style");
+  const host = document.createElement('psst-passkey-request');
+  const shadow = host.attachShadow({mode: 'closed'});
+  const style = document.createElement('style');
   style.textContent = `
     :host { all: initial; }
     .dialog {
@@ -126,38 +136,38 @@ const showRequest = request => {
     .status { color: #d8d2e8; margin: 12px 0 0; }
   `;
 
-  const dialog = document.createElement("section");
-  dialog.className = "dialog";
-  dialog.setAttribute("role", "dialog");
-  dialog.setAttribute("aria-labelledby", "psst-passkey-title");
+  const dialog = document.createElement('section');
+  dialog.className = 'dialog';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-labelledby', 'psst-passkey-title');
 
-  const title = document.createElement("h2");
-  title.id = "psst-passkey-title";
-  title.textContent = "Passkey requested";
+  const title = document.createElement('h2');
+  title.id = 'psst-passkey-title';
+  title.textContent = 'Passkey requested';
 
-  const description = document.createElement("p");
-  description.append("A passkey was requested by ");
-  const origin = document.createElement("span");
-  origin.className = "origin";
+  const description = document.createElement('p');
+  description.append('A passkey was requested by ');
+  const origin = document.createElement('span');
+  origin.className = 'origin';
   origin.textContent = location.origin;
   description.append(origin, ` for ${request.request.rpId}.`);
 
-  const actions = document.createElement("div");
-  actions.className = "actions";
-  const psst = document.createElement("button");
-  psst.type = "button";
-  psst.textContent = "Use psst";
-  const browser = document.createElement("button");
-  browser.type = "button";
-  browser.className = "secondary";
-  browser.textContent = "Continue with browser";
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const psst = document.createElement('button');
+  psst.type = 'button';
+  psst.textContent = 'Use psst';
+  const browser = document.createElement('button');
+  browser.type = 'button';
+  browser.className = 'secondary';
+  browser.textContent = 'Continue with browser';
   actions.append(psst, browser);
 
-  const status = document.createElement("p");
-  status.className = "status";
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
-  status.textContent = "Choose how to complete this passkey request.";
+  const status = document.createElement('p');
+  status.className = 'status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = 'Choose how to complete this passkey request.';
 
   dialog.append(title, description, actions, status);
   shadow.append(style, dialog);
@@ -169,10 +179,12 @@ const showRequest = request => {
   request.psst = psst;
   request.browser = browser;
   request.status = status;
-  psst.addEventListener("click", () => usePsst(request));
-  browser.addEventListener("click", () => useBrowser(request));
-  dialog.addEventListener("keydown", event => {
-    if (event.key !== "Escape") return;
+  psst.addEventListener('click', () => usePsst(request));
+  browser.addEventListener('click', () => useBrowser(request));
+  dialog.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') {
+      return;
+    }
 
     event.preventDefault();
     useBrowser(request);
@@ -181,8 +193,10 @@ const showRequest = request => {
 };
 
 window.addEventListener(REQUEST_EVENT, event => {
-  const { id, request } = event.detail || {};
-  if (typeof id !== "string" || typeof request !== "object" || request === null) return;
+  const {id, request} = event.detail || {};
+  if (typeof id !== 'string' || typeof request !== 'object' || request === null) {
+    return;
+  }
 
   const key = JSON.stringify(request);
   if (activeRequest) {
@@ -191,34 +205,40 @@ window.addEventListener(REQUEST_EVENT, event => {
     } else {
       respond([id], {
         success: false,
-        error: "Another passkey request is already awaiting a choice",
+        error: 'Another passkey request is already awaiting a choice',
       });
     }
     return;
   }
 
-  activeRequest = { ids: new Set([id]), key, request };
+  activeRequest = {ids: new Set([id]), key, request};
   showRequest(activeRequest);
 });
 
 window.addEventListener(CANCEL_EVENT, event => {
   const id = event.detail?.id;
-  if (!activeRequest || typeof id !== "string") return;
+  if (!activeRequest || typeof id !== 'string') {
+    return;
+  }
 
   activeRequest.ids.delete(id);
-  if (activeRequest.ids.size !== 0) return;
+  if (activeRequest.ids.size !== 0) {
+    return;
+  }
 
   const request = activeRequest;
   closeRequest(request);
   if (request.handoffId) {
     void chrome.runtime.sendMessage({
-      type: "psst.webauthn.cancel",
+      type: 'psst.webauthn.cancel',
       requestId: request.handoffId,
     });
   }
 });
 
 window.addEventListener(PROXY_SETTLED_EVENT, event => {
-  if (!activeRequest || !activeRequest.ids.has(event.detail?.id)) return;
+  if (!activeRequest || !activeRequest.ids.has(event.detail?.id)) {
+    return;
+  }
   closeRequest(activeRequest);
 });

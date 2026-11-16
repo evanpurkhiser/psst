@@ -37,11 +37,11 @@ extension or native-host files.
 
 Mount these host paths into the browser container:
 
-| Host | Container | Access |
-| --- | --- | --- |
-| `~/.local/share/psst` | `/opt/psst` | read-only |
+| Host                                        | Container                                            | Access    |
+| ------------------------------------------- | ---------------------------------------------------- | --------- |
+| `~/.local/share/psst`                       | `/opt/psst`                                          | read-only |
 | `~/.local/share/psst/container-native-host` | `/etc/opt/chrome_for_testing/native-messaging-hosts` | read-only |
-| `$XDG_RUNTIME_DIR/psst-browser` | `/run/psst` | read-only |
+| `$XDG_RUNTIME_DIR/psst-browser`             | `/run/psst`                                          | read-only |
 
 Create `$XDG_RUNTIME_DIR/psst-browser` with mode 0711
 before starting the container.
