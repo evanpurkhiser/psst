@@ -81,6 +81,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up tools
+        uses: jdx/mise-action@v4.2.0
+        with:
+          cache: false
+
       - name: Install Chrome
         run: |
           curl --fail --location --output /tmp/google-chrome-stable.deb \
