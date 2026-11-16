@@ -21,9 +21,21 @@ printf '%s' "$share_url" | psst open
 # Capture the single opaque line returned by the command.
 ```
 
+If the command interface only provides live PTY input, start this command,
+then send the share URL to its standard input:
+
+```bash
+IFS= read -rs share_url; printf '%s' "$share_url" | psst open
+```
+
+The silent `read` keeps the URL out of the command text and terminal echo.
+Do not substitute the URL into the shell command.
+
 Shell variables and traps do not persist across independent tool calls.
 Pass the exact returned reference wherever `SESSION_REFERENCE` appears below;
-never echo or log it.
+it is a short-lived authorization capability
+and necessarily appears in psst command arguments and local tool transcripts.
+Do not publish or reuse it outside the current task.
 
 The session expires after five minutes.
 A view-once share is consumed by `open`,
