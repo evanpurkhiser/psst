@@ -3,6 +3,7 @@ use base64::{
     engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
 };
 use p256::ecdsa::{Signature, SigningKey, signature::Signer};
+pub use psst::AssertionRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -12,19 +13,6 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::error::{Error, Result};
 
 const ASSERTION_FLAGS: u8 = 0x01 | 0x04 | 0x08 | 0x10;
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AssertionRequest {
-    #[serde(default)]
-    pub request_id: Option<String>,
-    pub origin: String,
-    pub challenge: String,
-    #[serde(default)]
-    pub rp_id: Option<String>,
-    #[serde(default)]
-    pub allow_credentials: Vec<String>,
-}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
