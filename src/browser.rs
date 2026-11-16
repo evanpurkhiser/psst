@@ -199,7 +199,20 @@ fn copy_executable_if_changed(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn browser_bridge_executable(executable: &Path) -> Result<PathBuf> {
-    let browser_bridge = executable.with_file_name("psst-browser-bridge");
+    let configured = option_env!("PSST_BROWSER_BRIDGE_PATH")
+        .filter(|path| !path.is_empty())
+        .map(Path::new);
+
+    resolve_browser_bridge_executable(executable, configured)
+}
+
+fn resolve_browser_bridge_executable(
+    executable: &Path,
+    configured: Option<&Path>,
+) -> Result<PathBuf> {
+    let browser_bridge = configured
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| executable.with_file_name("psst-browser-bridge"));
     if !browser_bridge.is_file() {
         return Err(Error::BrowserBridgeUnavailable(browser_bridge));
     }
@@ -328,7 +341,21 @@ mod tests {
         fs::write(&browser_bridge, []).unwrap();
 
         assert_eq!(
-            browser_bridge_executable(&executable).unwrap(),
+            resolve_browser_bridge_executable(&executable, None).unwrap(),
+            browser_bridge.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn browser_bridge_uses_the_configured_build_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("bin/psst");
+        let browser_bridge = directory.path().join("lib/psst/browser-bridge");
+        fs::create_dir_all(browser_bridge.parent().unwrap()).unwrap();
+        fs::write(&browser_bridge, []).unwrap();
+
+        assert_eq!(
+            resolve_browser_bridge_executable(&executable, Some(&browser_bridge)).unwrap(),
             browser_bridge.canonicalize().unwrap()
         );
     }

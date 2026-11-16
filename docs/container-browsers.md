@@ -16,6 +16,16 @@ install -Dm755 target/x86_64-unknown-linux-musl/release/psst-browser-bridge ~/.c
 
 The build task selects the musl target for the current architecture
 and prints the resulting executable path.
+Package builds may instead install the helper as a private executable
+and set its absolute source path when compiling the CLI:
+
+```console
+PSST_BROWSER_BRIDGE_PATH=/usr/lib/psst/browser-bridge cargo build --release --locked
+```
+
+`psst browser install` copies
+that executable into the browser integration directory.
+Builds without a configured path resolve `psst-browser-bridge` next to the CLI.
 
 Install the browser files and configure the UID that the host observes
 for the container's browser process:
