@@ -1,3 +1,4 @@
+mod agent_browser;
 mod attachment;
 mod browser;
 mod client;
@@ -6,6 +7,7 @@ mod daemon;
 mod error;
 mod item;
 mod passkey_authorization;
+mod plugin;
 mod protocol;
 mod skill;
 mod webauthn;
@@ -14,11 +16,12 @@ use std::{
     env,
     io::{BufRead, BufReader, IsTerminal, Read, Write},
     os::unix::net::UnixStream,
+    path::PathBuf,
     thread,
     time::Duration,
 };
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use systemd_zbus::zbus::{blocking::Connection, zvariant::Value};
 use systemd_zbus::{ManagerProxyBlocking, Mode};
 use zeroize::Zeroizing;
@@ -85,6 +88,9 @@ enum Command {
         /// Opaque identifier returned by `psst open`.
         session: String,
     },
+    /// Serve the Agent Browser credential plugin protocol.
+    #[command(hide = true)]
+    AgentBrowserPlugin,
     #[command(hide = true)]
     Daemon,
 }
@@ -114,19 +120,50 @@ enum PasskeyCommand {
 enum IntegrationCommand {
     /// Install or refresh an integration.
     Install {
-        integration: Integration,
+        #[command(subcommand)]
+        integration: InstallIntegration,
+    },
+    /// Report an integration's generated artifacts and configuration.
+    Status {
+        #[command(subcommand)]
+        integration: StatusIntegration,
+    },
+    /// Clear all container browser peer authorization.
+    Reset {
+        #[command(subcommand)]
+        integration: ResetIntegration,
+    },
+}
+
+#[derive(Subcommand)]
+enum InstallIntegration {
+    AgentBrowser {
+        /// Agent Browser configuration file.
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+        /// Replace a conflicting psst plugin configuration.
+        #[arg(long)]
+        force: bool,
+    },
+    Chrome {
         /// Additional host UID permitted to use the container browser bridge.
         #[arg(long = "peer-uid", value_name = "UID")]
         allowed_peer_uids: Vec<u32>,
     },
-    /// Report an integration's generated artifacts and configuration.
-    Status { integration: Integration },
-    /// Clear all container browser peer authorization.
-    Reset { integration: Integration },
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum Integration {
+#[derive(Subcommand)]
+enum StatusIntegration {
+    AgentBrowser {
+        /// Agent Browser configuration file.
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+    },
+    Chrome,
+}
+
+#[derive(Subcommand)]
+enum ResetIntegration {
     Chrome,
 }
 
@@ -150,6 +187,7 @@ fn main() {
 fn run(command: Command) -> Result<()> {
     match command {
         Command::Daemon => daemon::run(),
+        Command::AgentBrowserPlugin => run_agent_browser_plugin(),
         Command::Open => {
             let stdin = std::io::stdin();
             refuse_share_terminal(stdin.is_terminal())?;
@@ -294,19 +332,76 @@ fn wait_for_passkey_handoff(session: String, request_id: String) -> Result<()> {
 fn run_integration(command: IntegrationCommand) -> Result<()> {
     match command {
         IntegrationCommand::Install {
-            integration: Integration::Chrome,
-            allowed_peer_uids,
+            integration: InstallIntegration::AgentBrowser { config, force },
+        } => agent_browser::install(config.as_deref(), force),
+        IntegrationCommand::Install {
+            integration: InstallIntegration::Chrome { allowed_peer_uids },
         } => browser::install(&allowed_peer_uids),
         IntegrationCommand::Status {
-            integration: Integration::Chrome,
+            integration: StatusIntegration::AgentBrowser { config },
+        } => {
+            serde_json::to_writer_pretty(
+                std::io::stdout().lock(),
+                &agent_browser::status(config.as_deref())?,
+            )?;
+            println!();
+            Ok(())
+        }
+        IntegrationCommand::Status {
+            integration: StatusIntegration::Chrome,
         } => {
             serde_json::to_writer_pretty(std::io::stdout().lock(), &browser::status()?)?;
             println!();
             Ok(())
         }
         IntegrationCommand::Reset {
-            integration: Integration::Chrome,
+            integration: ResetIntegration::Chrome,
         } => browser::reset_peers(),
+    }
+}
+
+fn run_agent_browser_plugin() -> Result<()> {
+    let mut input = Zeroizing::new(Vec::new());
+    std::io::stdin()
+        .take(MAX_JSON_REQUEST_BYTES as u64 + 1)
+        .read_to_end(&mut input)?;
+    if input.len() > MAX_JSON_REQUEST_BYTES {
+        return Err(Error::InputSizeLimit("plugin request"));
+    }
+
+    let mut stdout = std::io::stdout().lock();
+    let result = match plugin::parse(&input) {
+        Ok(request) => {
+            refuse_terminal(stdout.is_terminal())?;
+            match request_secret(&request.session, "username").and_then(|username| {
+                request_secret(&request.session, "password").map(|password| (username, password))
+            }) {
+                Ok((username, password)) => plugin::write_credential_response(
+                    &mut stdout,
+                    &username,
+                    &password,
+                    request.url.as_deref(),
+                ),
+                Err(error) => serde_json::to_writer(&mut stdout, &plugin::error_response(&error))
+                    .map_err(Error::from),
+            }
+        }
+        Err(error) => {
+            serde_json::to_writer(&mut stdout, &plugin::error_response(&error)).map_err(Error::from)
+        }
+    };
+    result?;
+    writeln!(stdout)?;
+    Ok(())
+}
+
+fn request_secret(session: &str, field: &str) -> Result<item::SecretValue> {
+    match request(Request::Get {
+        session: session.into(),
+        field: field.into(),
+    })? {
+        Response::Secret { value } => Ok(value),
+        response => unexpected(response),
     }
 }
 
@@ -507,11 +602,37 @@ mod tests {
             Ok(Cli {
                 command: Command::Integration {
                     command: IntegrationCommand::Status {
-                        integration: Integration::Chrome
+                        integration: StatusIntegration::Chrome,
                     }
                 }
             })
         ));
         assert!(Cli::try_parse_from(["psst", "browser", "status"]).is_err());
+    }
+
+    #[test]
+    fn agent_browser_setup_uses_the_integration_namespace() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "psst",
+                "integration",
+                "install",
+                "agent-browser",
+                "--config",
+                "agent-browser.json",
+                "--force"
+            ]),
+            Ok(Cli {
+                command: Command::Integration {
+                    command: IntegrationCommand::Install {
+                        integration: InstallIntegration::AgentBrowser {
+                            config: Some(_),
+                            force: true,
+                        }
+                    }
+                }
+            })
+        ));
+        assert!(Cli::try_parse_from(["psst", "integration", "reset", "agent-browser"]).is_err());
     }
 }

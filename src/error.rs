@@ -62,6 +62,12 @@ pub enum Error {
     HomeDirectory,
     #[error("the browser integration path is invalid")]
     BrowserInstallPath,
+    #[error("integration config at {0} must be a JSON object with a plugins array")]
+    IntegrationConfig(PathBuf),
+    #[error(
+        "Agent Browser config at {0} contains a conflicting psst plugin; rerun with --force to replace it"
+    )]
+    IntegrationConflict(PathBuf),
     #[error("the browser bridge executable was not found at {0}")]
     BrowserBridgeUnavailable(PathBuf),
     #[error("the Chrome extension package was not found at {0}")]
@@ -128,6 +134,8 @@ impl Error {
             Self::RuntimeDirectory => "runtime_directory_missing",
             Self::HomeDirectory => "home_directory_missing",
             Self::BrowserInstallPath => "browser_install_path_invalid",
+            Self::IntegrationConfig(_) => "integration_config_invalid",
+            Self::IntegrationConflict(_) => "integration_conflict",
             Self::BrowserBridgeUnavailable(_) => "browser_bridge_unavailable",
             Self::BrowserExtensionUnavailable(_) => "browser_extension_unavailable",
             Self::BrowserPeerRequired => "browser_peer_required",
@@ -154,7 +162,9 @@ impl Error {
             "invalid_link"
             | "share_from_terminal"
             | "input_too_large"
-            | "browser_peer_required" => 10,
+            | "browser_peer_required"
+            | "integration_config_invalid"
+            | "integration_conflict" => 10,
             "share_unavailable" | "network_error" => 11,
             "unsupported_container"
             | "decryption_failed"

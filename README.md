@@ -119,6 +119,29 @@ File values are available only through `download`,
 which verifies and decrypts the attachment before writing its original bytes.
 Attachments are currently limited to 64 MiB.
 
+### Agent Browser credentials
+
+Install psst as an Agent Browser credential provider:
+
+```console
+psst integration install agent-browser
+```
+
+The installer honors `AGENT_BROWSER_CONFIG` and accepts `--config PATH`.
+
+Then fill an existing login form without putting username
+or password in shell variables, files, or command arguments:
+
+```console
+agent-browser --session work auth login sentry \
+  --credential-provider psst --item SESSION_REFERENCE \
+  --url https://identity.example.com/login --no-navigate
+```
+
+The item must expose `username` and `password` selectors.
+Agent Browser receives them over the plugin's standard-I/O protocol
+and keeps them out of normal command output.
+
 ## Passkeys
 
 psst can complete a browser passkey request without exporting its private key.
