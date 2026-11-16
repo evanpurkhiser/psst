@@ -71,15 +71,17 @@ psst passkey handoff SESSION_REFERENCE REQUEST_ID
 **Use psst** creates a request identifier and starts waiting
 for the CLI handoff.
 `psst passkey handoff` authorizes that identifier for one minute.
-The browser sends the live origin, challenge, relying-party ID,
-and credential allow list through Chrome native messaging only
-after the browser choice.
+After the browser choice, Chrome supplies the live challenge, relying-party ID,
+and credential allow list through its Web Authentication proxy.
+The extension combines them with the live origin
+and sends the assertion request through Chrome native messaging.
 The daemon validates them and returns the WebAuthn assertion;
 neither the browser extension nor its caller receives the session identifier
 or private key.
 
-If the handoff fails, the browser keeps **Continue with browser** available
-and offers a new psst request identifier for another attempt.
+**Continue with browser** remains available while the handoff is waiting.
+If Chrome rejects the completed assertion,
+trigger the site's passkey action again for a new request.
 Each handoff is one-shot, including when its request fails WebAuthn validation.
 
 `psst passkey assert` is the lower-level interface

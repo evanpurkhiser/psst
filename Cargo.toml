@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/psst-browser-bridge"]
+resolver = "3"
+
 [package]
 name = "psst-cli"
 version = "0.1.2"
@@ -10,29 +14,56 @@ readme = "README.md"
 keywords = ["cli", "onepassword", "secrets", "security"]
 categories = ["command-line-utilities", "authentication"]
 
+[lib]
+name = "psst"
+path = "src/lib.rs"
+
 [[bin]]
 name = "psst"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = [
+  "dep:aes-gcm",
+  "dep:base64",
+  "dep:clap",
+  "dep:data-encoding",
+  "dep:hkdf",
+  "dep:hmac",
+  "dep:libc",
+  "dep:p256",
+  "dep:rand",
+  "dep:reqwest",
+  "dep:serde_json",
+  "dep:sha1",
+  "dep:sha2",
+  "dep:systemd-zbus",
+  "dep:thiserror",
+  "dep:url",
+  "dep:zeroize",
+]
 
 [dependencies]
-aes-gcm = "0.10"
-base64 = "0.22"
-clap = { version = "4.6", features = ["derive"] }
-data-encoding = "2.9"
-hkdf = "0.12"
-hmac = "0.12"
-libc = "0.2"
-p256 = { version = "0.13", features = ["ecdsa"] }
-rand = "0.9"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
+aes-gcm = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+clap = { version = "4.6", features = ["derive"], optional = true }
+data-encoding = { version = "2.9", optional = true }
+hkdf = { version = "0.12", optional = true }
+hmac = { version = "0.12", optional = true }
+libc = { version = "0.2", optional = true }
+p256 = { version = "0.13", features = ["ecdsa"], optional = true }
+rand = { version = "0.9", optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sha2 = "0.10"
-sha1 = "0.10"
-systemd-zbus = "5.3.2"
-thiserror = "2.0"
-url = "2.5"
-zeroize = "1.8"
+serde_json = { version = "1.0", optional = true }
+sha2 = { version = "0.10", optional = true }
+sha1 = { version = "0.10", optional = true }
+systemd-zbus = { version = "5.3.2", optional = true }
+thiserror = { version = "2.0", optional = true }
+url = { version = "2.5", optional = true }
+zeroize = { version = "1.8", optional = true }
 
 [dev-dependencies]
 tempfile = "3.24"

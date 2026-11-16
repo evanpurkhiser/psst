@@ -1405,6 +1405,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "psst-browser-bridge"
+version = "0.1.2"
+dependencies = [
+ "libc",
+ "psst-cli",
+ "serde_json",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
 name = "psst-cli"
 version = "0.1.2"
 dependencies = [
