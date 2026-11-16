@@ -69,6 +69,7 @@ jobs:
           jq --arg version "$VERSION" '.version = $version' \
             browser-extension/manifest.json > browser-extension/manifest.json.tmp
           mv browser-extension/manifest.json.tmp browser-extension/manifest.json
+          pnpm exec oxfmt --write browser-extension/manifest.json
 
       - name: Refresh lockfile metadata
         run: cargo metadata --format-version=1 > /dev/null
