@@ -66,7 +66,9 @@ pub enum Error {
     BrowserBridgeUnavailable(PathBuf),
     #[error("the Chrome extension package was not found at {0}")]
     BrowserExtensionUnavailable(PathBuf),
-    #[error("no browser peer UID is configured; run `psst browser install --peer-uid <UID>`")]
+    #[error(
+        "no browser peer UID is configured; run `psst integration install chrome --peer-uid <UID>`"
+    )]
     BrowserPeerRequired,
     #[error("the browser bridge rejected peer UID {0}")]
     BrowserPeer(u32),

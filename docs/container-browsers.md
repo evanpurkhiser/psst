@@ -25,8 +25,8 @@ PSST_BROWSER_EXTENSION_PATH=/usr/lib/psst/chrome-extension.crx \
   cargo build --release --locked
 ```
 
-`psst browser install` copies those files into the browser integration
-directory.
+`psst integration install chrome` copies those files into the browser
+integration directory.
 Builds without configured paths resolve `psst-browser-bridge`
 and `psst-chrome-extension.crx` next to the CLI.
 
@@ -34,7 +34,7 @@ Install the browser files and configure the UID that the host observes
 for the container's browser process:
 
 ```console
-psst browser install --peer-uid 65534
+psst integration install chrome --peer-uid 65534
 ```
 
 Rootless user namespaces commonly appear as UID 65534 to the host process
@@ -44,11 +44,11 @@ when the runtime uses a different mapping.
 Each `--peer-uid` adds to the existing allowlist;
 repeat it to add several mappings in one command.
 
-`psst browser status` reports whether each generated artifact is present
-and the current peer allowlist.
+`psst integration status chrome` reports
+whether each generated artifact is present and the current peer allowlist.
 It does not probe Chrome, the daemon, or bridge connectivity.
-`psst browser reset` clears the peer allowlist without removing the installed
-extension or native-host files.
+`psst integration reset chrome` clears the peer allowlist without removing the
+installed extension or native-host files.
 
 Mount these host paths into the browser container:
 

@@ -363,7 +363,7 @@ mod tests {
         assert!(bridge.contains("Reflect.apply(nativeGet"));
         assert!(!bridge.contains("const credential ="));
         assert!(relay.contains("response.error"));
-        assert!(relay.contains("browser install --peer-uid"));
+        assert!(relay.contains("integration install chrome --peer-uid"));
     }
 
     #[test]

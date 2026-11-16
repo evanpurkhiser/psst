@@ -135,7 +135,7 @@ Configure the browser bridge and the host UID observed
 for the rootless container:
 
 ```console
-psst browser install --peer-uid 65534
+psst integration install chrome --peer-uid 65534
 ```
 
 Use the UID reported by `browser_peer_unauthorized`
@@ -174,11 +174,11 @@ Open the share first when possible; if the prompt or site transaction expires,
 reload the sign-in flow and trigger a new passkey request.
 Silent mediation remains with Chrome because it cannot require user interaction.
 
-Use `psst browser status` to inspect generated artifact presence
+Use `psst integration status chrome` to inspect generated artifact presence
 and the container peer allowlist.
 It does not probe Chrome, the daemon, or bridge connectivity.
-`psst browser reset` clears the peer allowlist without removing the installed
-browser assets.
+`psst integration reset chrome` clears the peer allowlist without removing the
+installed browser assets.
 
 ### Low-level assertions
 
