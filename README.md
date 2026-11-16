@@ -64,8 +64,9 @@ retryable.
 `close` destroys only the local session.
 Revoke an active multi-view link from the item's Sharing History in 1Password.
 
-`fields` returns an ordered JSON array containing `selector`, `label`,
-and `type`.
+`fields` returns an ordered JSON array containing available field
+and passkey metadata.
+Normal fields contain `selector`, `label`, and `type`.
 File fields also contain `filename` and their decrypted byte `size`:
 
 ```json
@@ -77,6 +78,18 @@ File fields also contain `filename` and their decrypted byte `size`:
   "size": 116736
 }
 ```
+
+A shared passkey appears after the normal fields:
+
+```json
+{
+  "type": "passkey",
+  "credentialId": "Y3JlZGVudGlhbA",
+  "rpId": "example.com"
+}
+```
+
+Passkeys do not have a field selector and are used through `psst passkey`.
 
 Selectors are unique and stable for the session;
 duplicate names receive numeric suffixes.

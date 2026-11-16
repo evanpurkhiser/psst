@@ -34,7 +34,7 @@ Close the session as soon as its consumer finishes:
 psst close SESSION_REFERENCE
 ```
 
-## Consume a field
+## Inspect the item
 
 Inspect metadata first, then use an exact returned selector:
 
@@ -43,6 +43,12 @@ psst fields SESSION_REFERENCE
 psst get SESSION_REFERENCE -- SELECTOR | <consumer>
 psst download SESSION_REFERENCE -- FILE_SELECTOR | <consumer>
 ```
+
+`fields` also lists a shared passkey as `type: "passkey"` with its `rpId`
+and `credentialId`.
+Its presence confirms that the session can be used with the passkey commands
+below.
+Passkeys do not have a field selector and cannot be retrieved with `get`.
 
 `get` and `download` refuse terminal output.
 Keep the direct pipe intact; never print, inspect, log, summarize,

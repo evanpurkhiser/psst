@@ -31,8 +31,9 @@ Both containers use AES-256-GCM with a 12-byte IV.
 The authentication tag is appended to the ciphertext in the container's
 base64url `data` member.
 The decrypted payload is UTF-8 JSON.
-`fields` exposes metadata for populated fields from the details payload;
-it does not include their values.
+`fields` exposes metadata for populated fields from the details payload
+and passkeys from the overview and details payloads.
+It does not include field values or passkey private-key material.
 
 ## Attachments
 
