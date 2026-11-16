@@ -61,11 +61,12 @@ const useBrowser = async request => {
 };
 
 const usePsst = request => {
-  const requestId = crypto.randomUUID();
+  const requestId = request.browserRequestId;
   request.handoffId = requestId;
   request.psst.disabled = true;
   request.browser.focus();
-  request.status.textContent = `psst handoff ${requestId} is waiting. Run psst passkey handoff <session> ${requestId}`;
+  request.status.textContent =
+    'Run psst passkey handoff SESSION_REFERENCE with this browser request ID.';
 
   chrome.runtime
     .sendMessage({
@@ -134,6 +135,19 @@ const showRequest = request => {
     button.secondary { background: #3a3643; }
     button:disabled { cursor: wait; opacity: 0.55; }
     .status { color: #d8d2e8; margin: 12px 0 0; }
+    .request-id { display: block; margin: 12px 0 0; }
+    .request-id span { display: block; font-size: 12px; margin-bottom: 4px; }
+    input {
+      background: #292530;
+      border: 1px solid #6c5fc7;
+      border-radius: 4px;
+      box-sizing: border-box;
+      color: #f6f3ff;
+      flex: 1;
+      font: 12px/1.4 ui-monospace, monospace;
+      min-width: 0;
+      padding: 6px;
+    }
   `;
 
   const dialog = document.createElement('section');
@@ -169,7 +183,18 @@ const showRequest = request => {
   status.setAttribute('aria-live', 'polite');
   status.textContent = 'Choose how to complete this passkey request.';
 
-  dialog.append(title, description, actions, status);
+  const requestIdLabel = document.createElement('label');
+  requestIdLabel.className = 'request-id';
+  const requestIdText = document.createElement('span');
+  requestIdText.textContent = 'Browser request ID';
+  const requestId = document.createElement('input');
+  requestId.type = 'text';
+  requestId.readOnly = true;
+  requestId.value = request.browserRequestId;
+  requestId.setAttribute('aria-label', 'Browser request ID');
+  requestIdLabel.append(requestIdText, requestId);
+
+  dialog.append(title, description, actions, requestIdLabel, status);
   shadow.append(style, dialog);
   document.documentElement.append(host);
 
@@ -211,7 +236,12 @@ window.addEventListener(REQUEST_EVENT, event => {
     return;
   }
 
-  activeRequest = {ids: new Set([id]), key, request};
+  activeRequest = {
+    ids: new Set([id]),
+    key,
+    request,
+    browserRequestId: crypto.randomUUID(),
+  };
   showRequest(activeRequest);
 });
 
