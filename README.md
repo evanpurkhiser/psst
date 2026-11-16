@@ -61,8 +61,23 @@ then the daemon serves the session from memory for up to five minutes.
 Losing the session ID or allowing the session to expire may make the item
 unrecoverable; use a short-lived multi-view share when retrieval must be
 retryable.
+The session ID is a short-lived authorization capability rather than decrypted
+secret material.
+It is printed by `open` and passed in later command arguments,
+so local process listings and tool transcripts may contain it.
+Do not publish or reuse it outside the current task.
 `close` destroys only the local session.
 Revoke an active multi-view link from the item's Sharing History in 1Password.
+
+For command interfaces that only provide a live PTY,
+start a silent shell read
+and then send the share URL through the running process's standard input:
+
+```console
+IFS= read -rs share_url; printf '%s' "$share_url" | psst open
+```
+
+This keeps the share URL out of the command text and terminal echo.
 
 `fields` returns an ordered JSON array containing available field
 and passkey metadata.
