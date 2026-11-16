@@ -267,40 +267,11 @@ fn totp_at(uri: &str, timestamp: u64) -> std::result::Result<String, TotpError> 
     Ok(totp.generate(timestamp).to_string())
 }
 
-fn parse_totp(uri: &str) -> std::result::Result<Totp, ProtocolError> {
-    if !uri.contains("://") {
-        let uri = seed_totp_uri(uri)?;
-
-        return parse_standard_totp(uri.as_str());
-    }
-
-    match parse_standard_totp(uri) {
-        Err(ProtocolError::SecretNotSet) => {
-            let uri = legacy_totp_uri(uri)?;
-
-            parse_standard_totp(uri.as_str())
-        }
-        Err(ProtocolError::InvalidSecret) => {
-            let uri = normalized_totp_uri(uri)?;
-
-            parse_standard_totp(uri.as_str())
-        }
-        result => result,
-    }
-}
-
-fn seed_totp_uri(secret: &str) -> std::result::Result<Url, ProtocolError> {
-    let mut uri = Url::parse("otpauth://totp/").map_err(ProtocolError::UrlParse)?;
-    uri.query_pairs_mut()
-        .append_pair("secret", &normalized_secret(secret));
-
-    Ok(uri)
-}
-
-fn parse_standard_totp(uri: &str) -> std::result::Result<Totp, ProtocolError> {
-    match Totp::from_url(uri) {
+fn parse_totp(value: &str) -> std::result::Result<Totp, ProtocolError> {
+    let uri = normalized_totp_uri(value)?;
+    match Totp::from_url(uri.as_str()) {
         Err(ProtocolError::SecretTooShort { .. }) => {
-            let totp = Totp::from_url_unchecked(uri)?;
+            let totp = Totp::from_url_unchecked(uri.as_str())?;
             if totp.step() == 0 {
                 return Err(ProtocolError::InvalidStepZero);
             }
@@ -311,34 +282,42 @@ fn parse_standard_totp(uri: &str) -> std::result::Result<Totp, ProtocolError> {
     }
 }
 
-fn legacy_totp_uri(uri: &str) -> std::result::Result<Url, ProtocolError> {
-    let mut uri = Url::parse(uri).map_err(ProtocolError::UrlParse)?;
-    let secret = uri
-        .path_segments()
-        .and_then(|mut segments| segments.find(|segment| !segment.is_empty()))
+fn normalized_totp_uri(value: &str) -> std::result::Result<Url, ProtocolError> {
+    let (mut uri, bare_secret) = if value.contains("://") {
+        (Url::parse(value).map_err(ProtocolError::UrlParse)?, None)
+    } else {
+        (
+            Url::parse("otpauth://totp/").map_err(ProtocolError::UrlParse)?,
+            Some(Zeroizing::new(value.to_owned())),
+        )
+    };
+    let mut query_secret = None;
+    let parameters = uri
+        .query_pairs()
+        .filter_map(|(key, value)| {
+            if key == "secret" {
+                query_secret = Some(Zeroizing::new(value.into_owned()));
+
+                return None;
+            }
+
+            Some((key.into_owned(), value.into_owned()))
+        })
+        .collect::<Vec<_>>();
+    let secret_in_path = bare_secret.is_none() && query_secret.is_none();
+    let secret = bare_secret
+        .or(query_secret)
+        .or_else(|| {
+            uri.path_segments()
+                .and_then(|mut segments| segments.find(|segment| !segment.is_empty()))
+                .map(|secret| Zeroizing::new(secret.to_owned()))
+        })
         .ok_or(ProtocolError::SecretNotSet)
         .map(normalized_secret)?;
 
-    uri.set_path("");
-    uri.query_pairs_mut().append_pair("secret", &secret);
-
-    Ok(uri)
-}
-
-fn normalized_totp_uri(uri: &str) -> std::result::Result<Url, ProtocolError> {
-    let mut uri = Url::parse(uri).map_err(ProtocolError::UrlParse)?;
-    let secret = Zeroizing::new(
-        uri.query_pairs()
-            .find_map(|(key, value)| (key == "secret").then_some(value.into_owned()))
-            .ok_or(ProtocolError::SecretNotSet)?,
-    );
-    let secret = normalized_secret(&secret);
-    let parameters = uri
-        .query_pairs()
-        .filter(|(key, _)| key != "secret")
-        .map(|(key, value)| (key.into_owned(), value.into_owned()))
-        .collect::<Vec<_>>();
-
+    if secret_in_path {
+        uri.set_path("");
+    }
     uri.set_query(None);
     uri.query_pairs_mut()
         .extend_pairs(parameters)
@@ -347,8 +326,8 @@ fn normalized_totp_uri(uri: &str) -> std::result::Result<Url, ProtocolError> {
     Ok(uri)
 }
 
-fn normalized_secret(secret: &str) -> Zeroizing<String> {
-    let mut secret = Zeroizing::new(secret.replace([' ', '='], ""));
+fn normalized_secret(mut secret: Zeroizing<String>) -> Zeroizing<String> {
+    secret.retain(|character| !matches!(character, ' ' | '='));
     secret.make_ascii_uppercase();
 
     secret
