@@ -87,6 +87,9 @@ jobs:
             https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
           sudo apt-get install --yes /tmp/google-chrome-stable.deb
 
+      - name: Install extension dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Build signed extension
         env:
           EXTENSION_KEY: ${{ secrets.PSST_CHROME_EXTENSION_KEY }}
@@ -95,7 +98,7 @@ jobs:
           KEY=$(mktemp)
           trap 'rm -f "$KEY"' EXIT
           printf '%s' "$EXTENSION_KEY" > "$KEY"
-          ./scripts/build-chrome-extension "$KEY"
+          PSST_CHROME_EXTENSION_KEY_FILE="$KEY" pnpm build-release
           sha256sum target/psst-chrome-extension.crx > target/psst-chrome-extension.crx.sha256
 
       - name: Publish release assets

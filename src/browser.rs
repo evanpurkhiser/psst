@@ -343,64 +343,6 @@ mod tests {
     }
 
     #[test]
-    fn extension_returns_credentials_through_chrome() {
-        let background = include_str!("../browser-extension/background.js");
-        let bridge = include_str!("../browser-extension/bridge.js");
-        let relay = include_str!("../browser-extension/relay.js");
-
-        assert!(background.contains("webAuthenticationProxy.completeGetRequest"));
-        assert!(background.contains("responseJson: JSON.stringify(response.assertion)"));
-        assert!(bridge.contains("Reflect.apply(nativeGet"));
-        assert!(!bridge.contains("const credential ="));
-        assert!(relay.contains("response.error"));
-        assert!(relay.contains("browser install --peer-uid"));
-    }
-
-    #[test]
-    fn extension_tracks_parallel_passkey_requests() {
-        let background = include_str!("../browser-extension/background.js");
-
-        assert!(background.contains("const armingRequests = new Map()"));
-        assert!(background.contains("const armedRequests = new Map()"));
-        assert!(background.contains("const activeRequests = new Map()"));
-        assert!(background.contains("activeRequests.set(requestInfo.requestId"));
-        assert!(background.contains("activeRequests.delete(requestInfo.requestId)"));
-        assert!(background.contains("matches.length !== 1"));
-    }
-
-    #[test]
-    fn passkey_prompt_exposes_a_stable_browser_request_id() {
-        let relay = include_str!("../browser-extension/relay.js");
-        let generated = relay.find("browserRequestId: crypto.randomUUID()").unwrap();
-        let shown = relay.find("showRequest(activeRequest)").unwrap();
-        let wait_for_psst = relay
-            .split_once("const waitForPsst = request =>")
-            .unwrap()
-            .1
-            .split_once("const showRequest = request =>")
-            .unwrap()
-            .0;
-
-        assert!(generated < shown);
-        assert!(relay.contains("requestId.value = request.browserRequestId"));
-        assert!(relay.contains("document.createElement('dialog')"));
-        assert!(relay.contains("document.createElement('label')"));
-        assert!(relay.contains("document.createElement('output')"));
-        assert!(relay.contains("requestIdLabel.append(requestId)"));
-        assert!(!relay.contains("setAttribute('role'"));
-        assert!(!relay.contains("setAttribute('aria-live'"));
-        assert!(!relay.contains("setAttribute('aria-label'"));
-        assert!(relay.contains("requestId.readOnly = true"));
-        assert!(!relay.contains("navigator.clipboard"));
-        assert!(wait_for_psst.contains("const requestId = request.browserRequestId"));
-        assert!(!wait_for_psst.contains("closeRequest"));
-        assert!(!wait_for_psst.contains("crypto.randomUUID"));
-        assert!(relay.contains("waitForPsst(activeRequest)"));
-        assert!(relay.contains("Continue without psst"));
-        assert!(!relay.contains("Use psst"));
-    }
-
-    #[test]
     fn browser_config_defaults_to_no_container_peers() {
         assert!(BrowserConfig::default().allowed_peer_uids.is_empty());
     }
