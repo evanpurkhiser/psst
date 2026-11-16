@@ -359,33 +359,6 @@ fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroi
             let size = plaintext.len() as u64;
             Ok((Response::Attachment { size }, Some(plaintext)))
         }
-        Request::PasskeyDescribe { ref session } => {
-            let session = active_session(&state.sessions, session)?;
-            let overview = session.decrypt_overview()?;
-            let details = session.decrypt_details()?;
-            let passkey = crate::webauthn::Passkey::from_item(&overview, &details)?;
-            Ok((
-                Response::PasskeyCredential {
-                    credential: passkey.describe(),
-                },
-                None,
-            ))
-        }
-        Request::PasskeyAssert {
-            ref session,
-            ref request,
-        } => {
-            let session = active_session(&state.sessions, session)?;
-            let overview = session.decrypt_overview()?;
-            let details = session.decrypt_details()?;
-            let passkey = crate::webauthn::Passkey::from_item(&overview, &details)?;
-            Ok((
-                Response::PasskeyAssertion {
-                    assertion: passkey.assert(request)?,
-                },
-                None,
-            ))
-        }
         Request::PasskeyHandoff {
             ref session,
             ref request_id,

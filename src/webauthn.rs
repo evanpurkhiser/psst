@@ -19,7 +19,6 @@ const ASSERTION_FLAGS: u8 = 0x01 | 0x04 | 0x08 | 0x10;
 pub struct CredentialSummary {
     pub credential_id: String,
     pub rp_id: String,
-    pub credential_type: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -161,7 +160,6 @@ impl Passkey {
         CredentialSummary {
             credential_id: self.credential_id.clone(),
             rp_id: self.rp_id.clone(),
-            credential_type: "public-key".into(),
         }
     }
 
