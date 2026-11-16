@@ -41,9 +41,12 @@ Rootless user namespaces commonly appear as UID 65534 to the host process
 that owns the socket.
 Use the UID reported by `browser_peer_unauthorized`
 when the runtime uses a different mapping.
-Repeat `--peer-uid` to allow more than one mapping.
+Each `--peer-uid` adds to the existing allowlist;
+repeat it to add several mappings in one command.
 
-`psst browser status` reports the installed paths and current peer allowlist.
+`psst browser status` reports whether each generated artifact is present
+and the current peer allowlist.
+It does not probe Chrome, the daemon, or bridge connectivity.
 `psst browser reset` clears the peer allowlist without removing the installed
 extension or native-host files.
 

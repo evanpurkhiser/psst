@@ -21,25 +21,19 @@ pub struct BrowserConfig {
     pub allowed_peer_uids: Vec<u32>,
 }
 
-#[derive(Clone, Copy)]
-pub enum PeerConfiguration<'a> {
-    Preserve,
-    Replace(&'a [u32]),
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserStatus {
     native_host_proxy: PathBuf,
-    native_host_proxy_installed: bool,
+    native_host_proxy_present: bool,
     browser_bridge: PathBuf,
-    browser_bridge_installed: bool,
+    browser_bridge_present: bool,
     browser_extension_crx: PathBuf,
-    browser_extension_crx_installed: bool,
+    browser_extension_crx_present: bool,
     container_native_host_manifest: PathBuf,
-    container_native_host_manifest_installed: bool,
+    container_native_host_manifest_present: bool,
     container_external_extension_manifest: PathBuf,
-    container_external_extension_manifest_installed: bool,
+    container_external_extension_manifest_present: bool,
     allowed_peer_uids: Vec<u32>,
 }
 
@@ -54,49 +48,44 @@ struct BrowserPaths {
     config: PathBuf,
 }
 
-pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<()> {
+pub fn install(additional_peer_uids: &[u32]) -> Result<()> {
     let paths = paths()?;
-    let allowed_peer_uids = match peer_configuration {
-        PeerConfiguration::Preserve => config()?.allowed_peer_uids,
-        PeerConfiguration::Replace(allowed_peer_uids) => allowed_peer_uids.to_vec(),
-    };
+    let allowed_peer_uids = merge_peer_uids(config()?.allowed_peer_uids, additional_peer_uids)?;
 
     remove_directory_if_exists(&paths.legacy_extension)?;
     for manifest in &paths.legacy_native_host_manifests {
         remove_file_if_exists(manifest)?;
     }
 
-    if !allowed_peer_uids.is_empty() {
-        let executable = env::current_exe()?.canonicalize()?;
-        let browser_bridge_executable = browser_bridge_executable(&executable)?;
-        let browser_extension_crx = browser_extension_crx(&executable)?;
-        write_executable_if_changed(&paths.native_host_proxy, NATIVE_HOST_PROXY)?;
-        copy_executable_if_changed(&browser_bridge_executable, &paths.browser_bridge)?;
-        copy_file_if_changed(&browser_extension_crx, &paths.browser_extension_crx, 0o644)?;
+    let executable = env::current_exe()?.canonicalize()?;
+    let browser_bridge_executable = browser_bridge_executable(&executable)?;
+    let browser_extension_crx = browser_extension_crx(&executable)?;
+    write_executable_if_changed(&paths.native_host_proxy, NATIVE_HOST_PROXY)?;
+    copy_executable_if_changed(&browser_bridge_executable, &paths.browser_bridge)?;
+    copy_file_if_changed(&browser_extension_crx, &paths.browser_extension_crx, 0o644)?;
 
-        let container_manifest = serde_json::to_vec_pretty(&json!({
-            "name": NATIVE_HOST,
-            "description": "psst passkey native messaging host",
-            "path": format!("{CONTAINER_ROOT}/native-host"),
-            "type": "stdio",
-            "allowed_origins": [EXTENSION_ORIGIN],
-        }))?;
-        write_if_changed(
-            paths.container_native_host_manifest.clone(),
-            &container_manifest,
-        )?;
+    let container_manifest = serde_json::to_vec_pretty(&json!({
+        "name": NATIVE_HOST,
+        "description": "psst passkey native messaging host",
+        "path": format!("{CONTAINER_ROOT}/native-host"),
+        "type": "stdio",
+        "allowed_origins": [EXTENSION_ORIGIN],
+    }))?;
+    write_if_changed(
+        paths.container_native_host_manifest.clone(),
+        &container_manifest,
+    )?;
 
-        let external_extension_manifest = serde_json::to_vec_pretty(&json!({
-            "external_crx": CONTAINER_EXTENSION_CRX,
-            "external_version": env!("CARGO_PKG_VERSION"),
-        }))?;
-        write_if_changed(
-            paths.container_external_extension_manifest.clone(),
-            &external_extension_manifest,
-        )?;
-    }
+    let external_extension_manifest = serde_json::to_vec_pretty(&json!({
+        "external_crx": CONTAINER_EXTENSION_CRX,
+        "external_version": env!("CARGO_PKG_VERSION"),
+    }))?;
+    write_if_changed(
+        paths.container_external_extension_manifest.clone(),
+        &external_extension_manifest,
+    )?;
 
-    if matches!(peer_configuration, PeerConfiguration::Replace(_)) {
+    if !additional_peer_uids.is_empty() {
         let config = BrowserConfig { allowed_peer_uids };
         write_if_changed(paths.config, &serde_json::to_vec_pretty(&config)?)?;
     }
@@ -107,23 +96,34 @@ pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<()> {
 pub fn status() -> Result<BrowserStatus> {
     let paths = paths()?;
     let browser_config = config()?;
-    let container_native_host_manifest_installed = paths.container_native_host_manifest.is_file();
-    let container_external_extension_manifest_installed =
+    let container_native_host_manifest_present = paths.container_native_host_manifest.is_file();
+    let container_external_extension_manifest_present =
         paths.container_external_extension_manifest.is_file();
 
     Ok(BrowserStatus {
-        native_host_proxy_installed: paths.native_host_proxy.is_file(),
-        browser_bridge_installed: paths.browser_bridge.is_file(),
-        browser_extension_crx_installed: paths.browser_extension_crx.is_file(),
+        native_host_proxy_present: paths.native_host_proxy.is_file(),
+        browser_bridge_present: paths.browser_bridge.is_file(),
+        browser_extension_crx_present: paths.browser_extension_crx.is_file(),
         native_host_proxy: paths.native_host_proxy,
         browser_bridge: paths.browser_bridge,
         browser_extension_crx: paths.browser_extension_crx,
         container_native_host_manifest: paths.container_native_host_manifest,
-        container_native_host_manifest_installed,
+        container_native_host_manifest_present,
         container_external_extension_manifest: paths.container_external_extension_manifest,
-        container_external_extension_manifest_installed,
+        container_external_extension_manifest_present,
         allowed_peer_uids: browser_config.allowed_peer_uids,
     })
+}
+
+fn merge_peer_uids(mut configured: Vec<u32>, additional: &[u32]) -> Result<Vec<u32>> {
+    configured.extend_from_slice(additional);
+    configured.sort_unstable();
+    configured.dedup();
+    if configured.is_empty() {
+        return Err(Error::BrowserPeerRequired);
+    }
+
+    Ok(configured)
 }
 
 pub fn reset_peers() -> Result<()> {
@@ -356,16 +356,35 @@ mod tests {
     fn extension_returns_credentials_through_chrome() {
         let background = include_str!("../browser-extension/background.js");
         let bridge = include_str!("../browser-extension/bridge.js");
+        let relay = include_str!("../browser-extension/relay.js");
 
         assert!(background.contains("webAuthenticationProxy.completeGetRequest"));
         assert!(background.contains("responseJson: JSON.stringify(response.assertion)"));
         assert!(bridge.contains("Reflect.apply(nativeGet"));
         assert!(!bridge.contains("const credential ="));
+        assert!(relay.contains("response.error"));
+        assert!(relay.contains("browser install --peer-uid"));
     }
 
     #[test]
     fn browser_config_defaults_to_no_container_peers() {
         assert!(BrowserConfig::default().allowed_peer_uids.is_empty());
+    }
+
+    #[test]
+    fn browser_install_requires_a_peer_uid() {
+        assert!(matches!(
+            merge_peer_uids(Vec::new(), &[]),
+            Err(Error::BrowserPeerRequired)
+        ));
+    }
+
+    #[test]
+    fn browser_install_adds_peer_uids() {
+        assert_eq!(
+            merge_peer_uids(vec![100999], &[65534, 100999]).unwrap(),
+            [65534, 100999]
+        );
     }
 
     #[test]

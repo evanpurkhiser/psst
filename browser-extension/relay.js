@@ -14,10 +14,7 @@ const failureMessage = response => {
     return 'psst is not ready. Open a psst session, then try again.';
   }
   if (response?.code === 'browser_peer_unauthorized') {
-    return (
-      'This browser is not authorized for psst. ' +
-      'Inspect psst browser status and install its peer UID.'
-    );
+    return `${response.error}. Add it with psst browser install --peer-uid <UID>.`;
   }
   if (response?.code === 'passkey_handoff_required') {
     return 'The psst handoff expired. Try psst again or continue with browser.';
