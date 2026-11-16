@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-pub const EXTENSION_ORIGIN: &str = "chrome-extension://mmehefpkhobgphfjkjlnebgbgfbmmmca/";
+pub const EXTENSION_ID: &str = "ldeghfipmipljkcmpjceopakklcfdcnf";
+pub const EXTENSION_ORIGIN: &str = "chrome-extension://ldeghfipmipljkcmpjceopakklcfdcnf/";
 pub const NATIVE_HOST: &str = "com.evanpurkhiser.psst";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

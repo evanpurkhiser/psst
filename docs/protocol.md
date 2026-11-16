@@ -99,10 +99,6 @@ after completion or cancellation.
 Chrome converts the returned assertion JSON into the native
 `PublicKeyCredential` received by the page.
 
-The Agent Browser plugin implements its existing `launch.mutate` capability
-and returns the installed extension directory for local Chrome launches.
-It does not participate in assertion signing.
-
 Container browsers use a second Unix socket
 that accepts assertion requests only.
 The daemon verifies the connecting process UID against the configured peer list

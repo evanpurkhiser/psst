@@ -100,41 +100,19 @@ that assertion into the native credential returned to the website.
 
 ### Browser setup
 
-Install the bundled Manifest V3 extension and Chrome native-messaging host:
+The browser integration is distributed as a signed CRX
+and installed through Chrome's external-extension mechanism.
+Configure the browser bridge and the host UID observed
+for the rootless container:
 
 ```console
-$ psst browser install
-/home/you/.local/share/psst/chrome-extension
+psst browser install --peer-uid 65534
 ```
 
-For Chrome used directly or through an existing CDP connection,
-open `chrome://extensions`, enable Developer mode, choose **Load unpacked**,
-and select the printed directory.
-Chrome and psst must run on the same machine.
-For Chrome in a container,
-use the assertion-only bridge described in
-[Container browsers](docs/container-browsers.md).
-
-Agent Browser can load the extension automatically
-for locally launched Chrome sessions.
-Register psst as a launch-mutator plugin in `~/.agent-browser/config.json`:
-
-```json
-{
-  "plugins": [
-    {
-      "name": "psst",
-      "command": "/home/you/.cargo/bin/psst",
-      "args": ["agent-browser-plugin"],
-      "capabilities": ["launch.mutate"]
-    }
-  ]
-}
-```
-
-`psst agent-browser-plugin` then returns only the installed extension path using
-Agent Browser's existing `launch.mutate` protocol.
-It receives no credential, session reference, or WebAuthn request.
+Use the UID reported by `browser_peer_unauthorized`
+when the container has a different user mapping.
+Mount the generated integration paths
+as described in [Container browsers](docs/container-browsers.md).
 
 Open the 1Password share and trigger the site's passkey action.
 The extension shows **Use psst** and **Continue with browser**.

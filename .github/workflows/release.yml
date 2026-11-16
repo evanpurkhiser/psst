@@ -35,6 +35,10 @@ jobs:
             echo "$MISMATCHES"
             exit 1
           fi
+          if [[ $(jq -r '.version' browser-extension/manifest.json) != "$VERSION" ]]; then
+            echo "Tag ${TAG} does not match the Chrome extension"
+            exit 1
+          fi
 
   publish_crate:
     name: Publish crate to crates.io
@@ -63,9 +67,50 @@ jobs:
         env:
           STEPS_CRATES_IO_AUTH_OUTPUTS_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
 
+  publish_extension:
+    name: Publish Chrome extension
+    runs-on: ubuntu-latest
+    needs: validate_version
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Chrome
+        run: |
+          curl --fail --location --output /tmp/google-chrome-stable.deb \
+            https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install --yes /tmp/google-chrome-stable.deb
+
+      - name: Build signed extension
+        env:
+          EXTENSION_KEY: ${{ secrets.PSST_CHROME_EXTENSION_KEY }}
+        run: |
+          umask 077
+          KEY=$(mktemp)
+          trap 'rm -f "$KEY"' EXIT
+          printf '%s' "$EXTENSION_KEY" > "$KEY"
+          ./scripts/build-chrome-extension "$KEY"
+          sha256sum target/psst-chrome-extension.crx > target/psst-chrome-extension.crx.sha256
+
+      - name: Publish release assets
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          gh release upload "$TAG" --clobber \
+            target/psst-chrome-extension.crx \
+            target/psst-chrome-extension.crx.sha256
+
   publish_package:
     name: Publish package
-    needs: publish_crate
+    needs: [publish_crate, publish_extension]
     uses: evanpurkhiser/workflows/.github/workflows/bump-aur.yml@main # zizmor: ignore[unpinned-uses]
     with:
       package: psst

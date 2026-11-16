@@ -6,7 +6,6 @@ mod daemon;
 mod error;
 mod item;
 mod passkey_authorization;
-mod plugin;
 mod protocol;
 mod skill;
 mod webauthn;
@@ -16,7 +15,7 @@ use std::{
     io::{BufRead, BufReader, IsTerminal, Read, Write},
     os::unix::net::UnixStream,
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use clap::{Parser, Subcommand};
@@ -34,8 +33,6 @@ const MAX_JSON_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_DAEMON_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const DAEMON_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const DAEMON_READ_TIMEOUT: Duration = Duration::from_secs(20);
-const PASSKEY_HANDOFF_TIMEOUT: Duration = Duration::from_secs(60);
-const PASSKEY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -74,7 +71,7 @@ enum Command {
         #[command(subcommand)]
         command: PasskeyCommand,
     },
-    /// Install the Chrome passkey extension and native messaging host.
+    /// Install the signed Chrome integration for a container browser.
     Browser {
         #[command(subcommand)]
         command: BrowserCommand,
@@ -86,9 +83,6 @@ enum Command {
         /// Opaque identifier returned by `psst open`.
         session: String,
     },
-    /// Serve the Agent Browser plugin protocol over standard input and output.
-    #[command(hide = true)]
-    AgentBrowserPlugin,
     #[command(hide = true)]
     Daemon,
 }
@@ -116,31 +110,19 @@ enum PasskeyCommand {
 
 #[derive(Subcommand)]
 enum BrowserCommand {
-    /// Install or refresh the bundled Chrome integration.
+    /// Install or refresh the signed container browser integration.
     Install {
         /// Host UID permitted to use the container browser bridge.
         #[arg(long = "peer-uid", value_name = "UID")]
         allowed_peer_uids: Vec<u32>,
     },
-    /// Report installed browser paths and container peer authorization.
+    /// Report installed container browser paths and peer authorization.
     Status,
     /// Clear all container browser peer authorization.
     Reset,
 }
 
 fn main() {
-    if env::args()
-        .nth(1)
-        .as_deref()
-        .is_some_and(browser::is_extension_origin)
-    {
-        if let Err(error) = disable_core_dumps().and_then(|()| run_native_host()) {
-            write_error(error.code(), &error.to_string());
-            std::process::exit(error.exit_status());
-        }
-        return;
-    }
-
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) if error.use_stderr() => {
@@ -160,7 +142,6 @@ fn main() {
 fn run(command: Command) -> Result<()> {
     match command {
         Command::Daemon => daemon::run(),
-        Command::AgentBrowserPlugin => run_agent_browser_plugin(),
         Command::Open => {
             let stdin = std::io::stdin();
             refuse_share_terminal(stdin.is_terminal())?;
@@ -287,9 +268,7 @@ fn run_browser(command: BrowserCommand) -> Result<()> {
             } else {
                 browser::PeerConfiguration::Replace(&allowed_peer_uids)
             };
-            let installation = browser::install(peer_configuration)?;
-            println!("{}", installation.extension.display());
-            Ok(())
+            browser::install(peer_configuration)
         }
         BrowserCommand::Status => {
             serde_json::to_writer_pretty(std::io::stdout().lock(), &browser::status()?)?;
@@ -297,106 +276,6 @@ fn run_browser(command: BrowserCommand) -> Result<()> {
             Ok(())
         }
         BrowserCommand::Reset => browser::reset_peers(),
-    }
-}
-
-fn run_agent_browser_plugin() -> Result<()> {
-    let mut input = Zeroizing::new(Vec::new());
-    std::io::stdin()
-        .take(MAX_JSON_REQUEST_BYTES as u64 + 1)
-        .read_to_end(&mut input)?;
-    if input.len() > MAX_JSON_REQUEST_BYTES {
-        return Err(Error::InputSizeLimit("plugin request"));
-    }
-
-    let response = match plugin::parse(&input) {
-        Ok(plugin::Action::Manifest) => plugin::manifest_response(),
-        Ok(plugin::Action::Launch) => {
-            match browser::install(browser::PeerConfiguration::Preserve) {
-                Ok(installation) => plugin::launch_response(&installation.extension),
-                Err(error) => plugin::error_response(&error),
-            }
-        }
-        Err(error) => plugin::error_response(&error),
-    };
-
-    serde_json::to_writer(std::io::stdout().lock(), &response)?;
-    Ok(())
-}
-
-fn run_native_host() -> Result<()> {
-    let response = match read_native_message() {
-        Ok(assertion_request) => wait_for_browser_assertion(assertion_request)?,
-        Err(Error::Json(error)) => serde_json::json!({
-            "success": false,
-            "code": "invalid_json",
-            "error": error.to_string(),
-        }),
-        Err(error) => return Err(error),
-    };
-    write_native_message(&response)
-}
-
-fn read_native_message() -> Result<webauthn::AssertionRequest> {
-    let mut length = [0_u8; 4];
-    std::io::stdin().read_exact(&mut length)?;
-    let length = u32::from_ne_bytes(length) as usize;
-    if length > MAX_JSON_REQUEST_BYTES {
-        return Err(Error::InputSizeLimit("native messaging request"));
-    }
-
-    let mut input = Zeroizing::new(vec![0_u8; length]);
-    std::io::stdin().read_exact(&mut input)?;
-    Ok(serde_json::from_slice(&input)?)
-}
-
-fn write_native_message(response: &serde_json::Value) -> Result<()> {
-    let encoded = Zeroizing::new(serde_json::to_vec(&response)?);
-    let length = u32::try_from(encoded.len())
-        .map_err(|_| Error::ResponseSizeLimit("native messaging response"))?;
-    let mut stdout = std::io::stdout().lock();
-    stdout.write_all(&length.to_ne_bytes())?;
-    stdout.write_all(&encoded)?;
-    stdout.flush()?;
-    Ok(())
-}
-
-fn wait_for_browser_assertion(
-    assertion_request: webauthn::AssertionRequest,
-) -> Result<serde_json::Value> {
-    let deadline = Instant::now() + PASSKEY_HANDOFF_TIMEOUT;
-    loop {
-        match request(Request::PasskeyBrowserAssert {
-            request: assertion_request.clone(),
-        }) {
-            Ok(Response::PasskeyAssertion { assertion }) => {
-                return Ok(serde_json::json!({
-                    "success": true,
-                    "assertion": assertion,
-                }));
-            }
-            Ok(response) => return unexpected(response),
-            Err(Error::Remote { code, message }) if code == "passkey_handoff_required" => {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining <= PASSKEY_POLL_INTERVAL {
-                    thread::sleep(remaining);
-                    return Ok(serde_json::json!({
-                        "success": false,
-                        "code": code,
-                        "error": message,
-                    }));
-                }
-
-                thread::sleep(PASSKEY_POLL_INTERVAL);
-            }
-            Err(error) => {
-                return Ok(serde_json::json!({
-                    "success": false,
-                    "code": error.code(),
-                    "error": error.to_string(),
-                }));
-            }
-        }
     }
 }
 
