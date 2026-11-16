@@ -88,14 +88,14 @@ The extension shows a labeled request identifier,
 and `passkey handoff` authorizes only that identifier for one minute.
 The CLI waits for the matching assertion and reports its failure or completion.
 Equivalent concurrent calls from one page share a prompt and assertion.
-Each Chrome instance presents one prompt at a time,
-while separate browser instances can complete distinct handoffs concurrently.
+Separate pages can complete distinct handoffs concurrently,
+including pages in the same Chrome instance.
 
 Conditional mediation requests use this prompt
 so browser drivers can request a shared passkey while the login form is active.
 Silent mediation stays native and never creates a psst prompt.
-The proxy is attached only for the waiting request and detached after completion
-or cancellation.
+The proxy remains attached while any request is waiting and detaches
+after the final request completes or is canceled.
 Chrome converts the returned assertion JSON into the native
 `PublicKeyCredential` received by the page.
 
