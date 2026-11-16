@@ -269,17 +269,17 @@ fn totp_at(uri: &str, timestamp: u64) -> std::result::Result<String, TotpError> 
 
 fn parse_totp(value: &str) -> std::result::Result<Totp, ProtocolError> {
     let uri = normalized_totp_uri(value)?;
-    match Totp::from_url(uri.as_str()) {
-        Err(ProtocolError::SecretTooShort { .. }) => {
-            let totp = Totp::from_url_unchecked(uri.as_str())?;
-            if totp.step() == 0 {
-                return Err(ProtocolError::InvalidStepZero);
-            }
-
-            Ok(totp)
-        }
-        result => result,
+    let totp = Totp::from_url_unchecked(uri.as_str())?;
+    if !(6..=8).contains(&totp.digits()) {
+        return Err(ProtocolError::InvalidDigits {
+            digits: totp.digits(),
+        });
     }
+    if totp.step() == 0 {
+        return Err(ProtocolError::InvalidStepZero);
+    }
+
+    Ok(totp)
 }
 
 fn normalized_totp_uri(value: &str) -> std::result::Result<Url, ProtocolError> {
@@ -314,6 +314,9 @@ fn normalized_totp_uri(value: &str) -> std::result::Result<Url, ProtocolError> {
         })
         .ok_or(ProtocolError::SecretNotSet)
         .map(normalized_secret)?;
+    if secret.is_empty() {
+        return Err(ProtocolError::InvalidSecret);
+    }
 
     if secret_in_path {
         uri.set_path("");
@@ -557,6 +560,19 @@ mod tests {
                 59
             ),
             Err(TotpError::Protocol(ProtocolError::InvalidStepZero))
+        );
+        assert_eq!(
+            totp_at(
+                "otpauth://totp/account?secret=GEZDGNBVGY3TQOJQ&digits=9",
+                59
+            ),
+            Err(TotpError::Protocol(ProtocolError::InvalidDigits {
+                digits: 9
+            }))
+        );
+        assert_eq!(
+            totp_at("otpauth://totp/account?secret====", 59),
+            Err(TotpError::Protocol(ProtocolError::InvalidSecret))
         );
     }
 
