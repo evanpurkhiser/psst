@@ -256,6 +256,10 @@ fn field_label(field: &Field) -> &str {
 }
 
 fn field_kind(field: &Field) -> &str {
+    if is_totp(field) {
+        return "totp";
+    }
+
     match field.kind.as_str() {
         "P" => "concealed",
         "T" | "E" => "string",
@@ -264,7 +268,7 @@ fn field_kind(field: &Field) -> &str {
 }
 
 fn format_value(field: &Field, value: Value) -> Result<Value> {
-    if field.kind == "totp" || (field.kind == "concealed" && field.name.starts_with("TOTP_")) {
+    if is_totp(field) {
         let uri = value.as_str().ok_or_else(|| Error::InvalidTotp {
             field: field.label.clone(),
             reason: TotpError::ValueType,
@@ -293,6 +297,10 @@ fn format_value(field: &Field, value: Value) -> Result<Value> {
     let year = month_year / 100;
     let month = month_year % 100;
     Ok(Value::String(format!("{month:02}/{year:04}")))
+}
+
+fn is_totp(field: &Field) -> bool {
+    field.kind == "totp" || (field.kind == "concealed" && field.name.starts_with("TOTP_"))
 }
 
 fn totp_at(uri: &str, timestamp: u64) -> std::result::Result<String, TotpError> {
@@ -496,6 +504,23 @@ mod tests {
         assert_eq!(fields[1].kind, "concealed");
         assert_secret(details, "username", b"evan@example.com");
         assert_secret(details, "password", b"secret");
+    }
+
+    #[test]
+    fn lists_legacy_totp_fields_by_retrieval_semantics() {
+        let details = br#"{
+            "sections": [{
+                "fields": [{
+                    "n":"TOTP_example",
+                    "t":"one-time password",
+                    "k":"concealed",
+                    "v":"otpauth://totp/example?secret=GEZDGNBVGY3TQOJQ"
+                }]
+            }]
+        }"#;
+        let fields = list_fields(details).expect("valid item details");
+
+        assert_eq!(fields[0].kind, "totp");
     }
 
     #[test]
