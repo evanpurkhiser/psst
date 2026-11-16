@@ -262,13 +262,34 @@ fn format_value(field: &Field, value: Value) -> Result<Value> {
 }
 
 fn totp_at(uri: &str, timestamp: u64) -> std::result::Result<String, TotpError> {
-    let totp = match Totp::from_url(uri) {
-        Ok(totp) => totp,
-        Err(ProtocolError::SecretNotSet) => Totp::from_url(legacy_totp_uri(uri)?)?,
-        Err(error) => return Err(error.into()),
-    };
+    let totp = parse_totp(uri)?;
 
     Ok(totp.generate(timestamp).to_string())
+}
+
+fn parse_totp(uri: &str) -> std::result::Result<Totp, ProtocolError> {
+    match parse_standard_totp(uri) {
+        Err(ProtocolError::SecretNotSet) => {
+            let uri = legacy_totp_uri(uri)?;
+
+            parse_standard_totp(uri.as_str())
+        }
+        result => result,
+    }
+}
+
+fn parse_standard_totp(uri: &str) -> std::result::Result<Totp, ProtocolError> {
+    match Totp::from_url(uri) {
+        Err(ProtocolError::SecretTooShort { .. }) => {
+            let totp = Totp::from_url_unchecked(uri)?;
+            if totp.step() == 0 {
+                return Err(ProtocolError::InvalidStepZero);
+            }
+
+            Ok(totp)
+        }
+        result => result,
+    }
 }
 
 fn legacy_totp_uri(uri: &str) -> std::result::Result<Url, ProtocolError> {
@@ -461,6 +482,15 @@ mod tests {
     }
 
     #[test]
+    fn generates_totp_codes_from_short_legacy_secrets() {
+        let uri = "otpauth://totp/GEZDGNBVGY3TQOJQ?digits=8&period=30";
+        let code = totp_at(uri, 59).expect("legacy 80-bit secret");
+
+        assert_eq!(code.len(), 8);
+        assert!(code.chars().all(|character| character.is_ascii_digit()));
+    }
+
+    #[test]
     fn reports_safe_totp_validation_reasons() {
         assert!(matches!(
             totp_at("otpauth://totp/?digits=6", 59),
@@ -477,6 +507,13 @@ mod tests {
             ),
             Err(TotpError::Protocol(ProtocolError::InvalidAlgorithm { .. }))
         ));
+        assert_eq!(
+            totp_at(
+                "otpauth://totp/account?secret=GEZDGNBVGY3TQOJQ&period=0",
+                59
+            ),
+            Err(TotpError::Protocol(ProtocolError::InvalidStepZero))
+        );
     }
 
     #[test]
