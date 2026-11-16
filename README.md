@@ -156,8 +156,9 @@ Conditional mediation requests surface the same choice
 so an agent can request a passkey share before the user submits the login form.
 Silent mediation remains with Chrome because it cannot require user interaction.
 
-Use `psst browser status` to inspect the installed paths
-and container peer allowlist.
+Use `psst browser status` to inspect generated artifact presence
+and the container peer allowlist.
+It does not probe Chrome, the daemon, or bridge connectivity.
 `psst browser reset` clears the peer allowlist without removing the installed
 browser assets.
 
