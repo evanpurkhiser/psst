@@ -4,18 +4,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use data_encoding::BASE32_NOPAD;
-use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha1::Sha1;
-use sha2::{Sha256, Sha512};
+use totp_rs::{Totp, TotpError as ProtocolError};
 use url::Url;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     attachment::Attachment,
-    error::{Error, Result},
+    error::{Error, Result, TotpError},
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -234,16 +231,23 @@ fn field_kind(field: &Field) -> &str {
 
 fn format_value(field: &Field, value: Value) -> Result<Value> {
     if field.kind == "totp" || (field.kind == "concealed" && field.name.starts_with("TOTP_")) {
-        let uri = value
-            .as_str()
-            .ok_or_else(|| Error::InvalidTotp(field.label.clone()))?;
+        let uri = value.as_str().ok_or_else(|| Error::InvalidTotp {
+            field: field.label.clone(),
+            reason: TotpError::ValueType,
+        })?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|_| Error::InvalidTotp(field.label.clone()))?
+            .map_err(|_| Error::InvalidTotp {
+                field: field.label.clone(),
+                reason: TotpError::Clock,
+            })?
             .as_secs();
         return totp_at(uri, now)
             .map(Value::String)
-            .ok_or_else(|| Error::InvalidTotp(field.label.clone()));
+            .map_err(|reason| Error::InvalidTotp {
+                field: field.label.clone(),
+                reason,
+            });
     }
 
     if field.kind != "monthYear" {
@@ -257,57 +261,79 @@ fn format_value(field: &Field, value: Value) -> Result<Value> {
     Ok(Value::String(format!("{month:02}/{year:04}")))
 }
 
-fn totp_at(uri: &str, timestamp: u64) -> Option<String> {
-    let uri = Url::parse(uri).ok()?;
-    if uri.scheme() != "otpauth" || uri.host_str() != Some("totp") {
-        return None;
+fn totp_at(uri: &str, timestamp: u64) -> std::result::Result<String, TotpError> {
+    let totp = parse_totp(uri)?;
+
+    Ok(totp.generate(timestamp).to_string())
+}
+
+fn parse_totp(value: &str) -> std::result::Result<Totp, ProtocolError> {
+    let uri = normalized_totp_uri(value)?;
+    let totp = Totp::from_url_unchecked(uri.as_str())?;
+    if !(6..=8).contains(&totp.digits()) {
+        return Err(ProtocolError::InvalidDigits {
+            digits: totp.digits(),
+        });
+    }
+    if totp.step() == 0 {
+        return Err(ProtocolError::InvalidStepZero);
     }
 
-    let parameters = uri.query_pairs().collect::<HashMap<_, _>>();
-    let encoded_secret = Zeroizing::new(parameters.get("secret")?.replace([' ', '='], ""));
-    let upper_secret = Zeroizing::new(encoded_secret.to_ascii_uppercase());
-    let secret = Zeroizing::new(BASE32_NOPAD.decode(upper_secret.as_bytes()).ok()?);
-    let period = parameters
-        .get("period")
-        .map(|value| value.parse::<u64>().ok())
-        .unwrap_or(Some(30))?;
-    let digits = parameters
-        .get("digits")
-        .map(|value| value.parse::<u32>().ok())
-        .unwrap_or(Some(6))?;
-    if period == 0 || !(6..=10).contains(&digits) {
-        return None;
+    Ok(totp)
+}
+
+fn normalized_totp_uri(value: &str) -> std::result::Result<Url, ProtocolError> {
+    let (mut uri, bare_secret) = if value.contains("://") {
+        (Url::parse(value).map_err(ProtocolError::UrlParse)?, None)
+    } else {
+        (
+            Url::parse("otpauth://totp/").map_err(ProtocolError::UrlParse)?,
+            Some(Zeroizing::new(value.to_owned())),
+        )
+    };
+    let mut query_secret = None;
+    let parameters = uri
+        .query_pairs()
+        .filter_map(|(key, value)| {
+            if key == "secret" {
+                query_secret = Some(Zeroizing::new(value.into_owned()));
+
+                return None;
+            }
+
+            Some((key.into_owned(), value.into_owned()))
+        })
+        .collect::<Vec<_>>();
+    let secret_in_path = bare_secret.is_none() && query_secret.is_none();
+    let secret = bare_secret
+        .or(query_secret)
+        .or_else(|| {
+            uri.path_segments()
+                .and_then(|mut segments| segments.find(|segment| !segment.is_empty()))
+                .map(|secret| Zeroizing::new(secret.to_owned()))
+        })
+        .ok_or(ProtocolError::SecretNotSet)
+        .map(normalized_secret)?;
+    if secret.is_empty() {
+        return Err(ProtocolError::InvalidSecret);
     }
 
-    let counter = (timestamp / period).to_be_bytes();
-    let digest = Zeroizing::new(match parameters
-        .get("algorithm")
-        .map(|value| value.to_ascii_uppercase())
-        .as_deref()
-        .unwrap_or("SHA1")
-    {
-        "SHA1" => {
-            let mut mac = <Hmac<Sha1> as Mac>::new_from_slice(&secret).ok()?;
-            mac.update(&counter);
-            Some(mac.finalize().into_bytes().to_vec())
-        }
-        "SHA256" => {
-            let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&secret).ok()?;
-            mac.update(&counter);
-            Some(mac.finalize().into_bytes().to_vec())
-        }
-        "SHA512" => {
-            let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(&secret).ok()?;
-            mac.update(&counter);
-            Some(mac.finalize().into_bytes().to_vec())
-        }
-        _ => return None,
-    }?);
-    let offset = usize::from(digest.last()? & 0x0f);
-    let bytes: [u8; 4] = digest.get(offset..offset + 4)?.try_into().ok()?;
-    let binary = u32::from_be_bytes(bytes) & 0x7fff_ffff;
-    let code = u64::from(binary) % 10_u64.pow(digits);
-    Some(format!("{code:0width$}", width = digits as usize))
+    if secret_in_path {
+        uri.set_path("");
+    }
+    uri.set_query(None);
+    uri.query_pairs_mut()
+        .extend_pairs(parameters)
+        .append_pair("secret", &secret);
+
+    Ok(uri)
+}
+
+fn normalized_secret(mut secret: Zeroizing<String>) -> Zeroizing<String> {
+    secret.retain(|character| !matches!(character, ' ' | '='));
+    secret.make_ascii_uppercase();
+
+    secret
 }
 
 fn is_populated(value: &Value) -> bool {
@@ -473,7 +499,81 @@ mod tests {
             "otpauth://totp/example?",
             "secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=8&period=30"
         );
-        assert_eq!(totp_at(uri, 59).as_deref(), Some("94287082"));
+        assert_eq!(totp_at(uri, 59).as_deref(), Ok("94287082"));
+    }
+
+    #[test]
+    fn generates_totp_codes_from_legacy_secret_paths() {
+        let uri = concat!(
+            "otpauth://totp/GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ?",
+            "algorithm=SHA1&digits=8&period=30"
+        );
+        assert_eq!(totp_at(uri, 59).as_deref(), Ok("94287082"));
+    }
+
+    #[test]
+    fn generates_totp_codes_from_short_legacy_secrets() {
+        let uri = "otpauth://totp/gezdgnbvgy3tqojq====?digits=8&period=30";
+        let code = totp_at(uri, 59).expect("legacy 80-bit secret");
+
+        assert_eq!(code.len(), 8);
+        assert!(code.chars().all(|character| character.is_ascii_digit()));
+    }
+
+    #[test]
+    fn generates_totp_codes_from_normalized_query_secrets() {
+        let uri = "otpauth://totp/example?secret=gezdgnbvgy3tqojq====&digits=8&period=30";
+        let code = totp_at(uri, 59).expect("padded lowercase secret");
+
+        assert_eq!(code.len(), 8);
+        assert!(code.chars().all(|character| character.is_ascii_digit()));
+    }
+
+    #[test]
+    fn generates_totp_codes_from_bare_secrets() {
+        let code = totp_at("e4dw4xrdq34wd3qw3", 59).expect("bare secret");
+
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|character| character.is_ascii_digit()));
+    }
+
+    #[test]
+    fn reports_safe_totp_validation_reasons() {
+        assert!(matches!(
+            totp_at("otpauth://totp/?digits=6", 59),
+            Err(TotpError::Protocol(ProtocolError::SecretNotSet))
+        ));
+        assert!(matches!(
+            totp_at("otpauth://totp/account?secret=not-base32!", 59),
+            Err(TotpError::Protocol(ProtocolError::InvalidSecret))
+        ));
+        assert!(matches!(
+            totp_at(
+                "otpauth://totp/account?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&algorithm=MD5",
+                59
+            ),
+            Err(TotpError::Protocol(ProtocolError::InvalidAlgorithm { .. }))
+        ));
+        assert_eq!(
+            totp_at(
+                "otpauth://totp/account?secret=GEZDGNBVGY3TQOJQ&period=0",
+                59
+            ),
+            Err(TotpError::Protocol(ProtocolError::InvalidStepZero))
+        );
+        assert_eq!(
+            totp_at(
+                "otpauth://totp/account?secret=GEZDGNBVGY3TQOJQ&digits=9",
+                59
+            ),
+            Err(TotpError::Protocol(ProtocolError::InvalidDigits {
+                digits: 9
+            }))
+        );
+        assert_eq!(
+            totp_at("otpauth://totp/account?secret====", 59),
+            Err(TotpError::Protocol(ProtocolError::InvalidSecret))
+        );
     }
 
     #[test]

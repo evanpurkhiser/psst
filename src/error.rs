@@ -2,6 +2,16 @@ use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum TotpError {
+    #[error("the value is not a string")]
+    ValueType,
+    #[error("the system clock is before the Unix epoch")]
+    Clock,
+    #[error(transparent)]
+    Protocol(#[from] totp_rs::TotpError),
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("invalid 1Password share link: {0}")]
@@ -20,8 +30,8 @@ pub enum Error {
     FileRequiresDownload(String),
     #[error("field {0:?} is not a file")]
     FieldNotFile(String),
-    #[error("field {0:?} does not contain a valid TOTP URI")]
-    InvalidTotp(String),
+    #[error("field {field:?} contains an unsupported TOTP value: {reason}")]
+    InvalidTotp { field: String, reason: TotpError },
     #[error("the shared item does not contain a passkey")]
     PasskeyUnavailable,
     #[error("the shared item contains an unsupported passkey")]
@@ -95,7 +105,7 @@ impl Error {
             Self::FieldNotFound(_) => "field_not_found",
             Self::FileRequiresDownload(_) => "field_is_file",
             Self::FieldNotFile(_) => "field_not_file",
-            Self::InvalidTotp(_) => "invalid_totp",
+            Self::InvalidTotp { .. } => "invalid_totp",
             Self::PasskeyUnavailable => "passkey_unavailable",
             Self::UnsupportedPasskey => "passkey_unsupported",
             Self::PasskeyKey => "passkey_key_invalid",
