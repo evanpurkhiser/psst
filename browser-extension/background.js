@@ -2,19 +2,59 @@ const HOST = 'com.evanpurkhiser.psst';
 const REQUEST_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-let armedRequest;
-let activeRequestId;
-let armingRequestId;
+const armingRequests = new Map();
+const armedRequests = new Map();
+const activeRequests = new Map();
+let attachPromise;
+let detachPromise;
+let proxyAttached = false;
 
-const detach = async () => {
-  armedRequest = undefined;
-  activeRequestId = undefined;
-  armingRequestId = undefined;
-  try {
-    await chrome.webAuthenticationProxy.detach();
-  } catch {
-    // The extension may already be detached after cancellation or reload.
+const maybeDetach = async () => {
+  if (
+    attachPromise ||
+    detachPromise ||
+    !proxyAttached ||
+    armingRequests.size ||
+    armedRequests.size ||
+    activeRequests.size
+  ) {
+    return;
   }
+
+  proxyAttached = false;
+  detachPromise = chrome.webAuthenticationProxy
+    .detach()
+    .catch(() => {
+      // The extension may already be detached after cancellation or reload.
+    })
+    .finally(() => {
+      detachPromise = undefined;
+    });
+  await detachPromise;
+};
+
+const ensureAttached = async () => {
+  if (detachPromise) {
+    await detachPromise;
+  }
+  if (proxyAttached) {
+    return;
+  }
+  if (!attachPromise) {
+    attachPromise = chrome.webAuthenticationProxy
+      .attach()
+      .then(error => {
+        if (error) {
+          throw new Error(error);
+        }
+        proxyAttached = true;
+      })
+      .finally(() => {
+        attachPromise = undefined;
+        void maybeDetach();
+      });
+  }
+  await attachPromise;
 };
 
 const fail = async (requestId, message) => {
@@ -24,7 +64,8 @@ const fail = async (requestId, message) => {
       error: {name: 'NotAllowedError', message},
     });
   } finally {
-    await detach();
+    activeRequests.delete(requestId);
+    await maybeDetach();
   }
 };
 
@@ -41,14 +82,17 @@ const sameRequest = (expected, actual) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'psst.webauthn.cancel') {
-    const matchesArming = message.requestId === armingRequestId;
-    const matchesArmed = message.requestId === armedRequest?.handoffId;
-    if (!matchesArming && !matchesArmed) {
+    const canceledArming = armingRequests.delete(message.requestId);
+    const canceledArmed = armedRequests.delete(message.requestId);
+    const active = [...activeRequests.values()].some(
+      request => request.handoffId === message.requestId,
+    );
+    if (!canceledArming && !canceledArmed && !active) {
       sendResponse({success: true});
       return false;
     }
 
-    detach().then(() => sendResponse({success: true}));
+    maybeDetach().then(() => sendResponse({success: true}));
     return true;
   }
   if (message?.type !== 'psst.webauthn.arm') {
@@ -67,35 +111,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({success: false, error: 'The passkey handoff identifier is invalid'});
     return false;
   }
-  if (armingRequestId || armedRequest) {
-    sendResponse({success: false, error: 'Another psst passkey handoff is active'});
+  if (
+    armingRequests.has(message.requestId) ||
+    armedRequests.has(message.requestId) ||
+    [...activeRequests.values()].some(request => request.handoffId === message.requestId)
+  ) {
+    sendResponse({success: false, error: 'This psst passkey handoff is already active'});
     return false;
   }
 
-  armingRequestId = message.requestId;
-  chrome.webAuthenticationProxy
-    .attach()
-    .then(error => {
-      if (error) {
-        throw new Error(error);
-      }
-      if (armingRequestId !== message.requestId) {
-        void detach();
+  armingRequests.set(message.requestId, {
+    handoffId: message.requestId,
+    origin: senderUrl.origin,
+    request: message.request,
+  });
+  ensureAttached()
+    .then(() => {
+      const request = armingRequests.get(message.requestId);
+      if (!request) {
+        void maybeDetach();
         sendResponse({success: false, error: 'The psst passkey handoff was canceled'});
         return;
       }
-      armedRequest = {
-        handoffId: message.requestId,
-        origin: senderUrl.origin,
-        request: message.request,
-      };
-      armingRequestId = undefined;
+      armingRequests.delete(message.requestId);
+      armedRequests.set(message.requestId, request);
       sendResponse({success: true, code: 'proxy_ready'});
     })
     .catch(() => {
-      if (armingRequestId === message.requestId) {
-        armingRequestId = undefined;
-      }
+      armingRequests.delete(message.requestId);
+      void maybeDetach();
       sendResponse({
         success: false,
         code: 'webauthn_proxy_unavailable',
@@ -106,11 +150,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.webAuthenticationProxy.onGetRequest.addListener(requestInfo => {
-  if (!armedRequest || activeRequestId !== undefined) {
-    void fail(requestInfo.requestId, 'No psst passkey handoff is ready');
-    return;
-  }
-
   let request;
   try {
     request = JSON.parse(requestInfo.requestDetailsJson);
@@ -118,15 +157,23 @@ chrome.webAuthenticationProxy.onGetRequest.addListener(requestInfo => {
     void fail(requestInfo.requestId, 'Chrome returned an invalid WebAuthn request');
     return;
   }
-  if (!sameRequest(armedRequest.request, request)) {
-    void fail(
-      requestInfo.requestId,
-      'The WebAuthn request changed after psst authorization',
-    );
+  const matches = [...armedRequests.values()].filter(item =>
+    sameRequest(item.request, request),
+  );
+  if (matches.length !== 1) {
+    for (const match of matches) {
+      armedRequests.delete(match.handoffId);
+    }
+    const message = matches.length
+      ? 'The WebAuthn request matched multiple psst handoffs'
+      : 'No psst passkey handoff is ready';
+    void fail(requestInfo.requestId, message);
     return;
   }
 
-  activeRequestId = requestInfo.requestId;
+  const [armedRequest] = matches;
+  armedRequests.delete(armedRequest.handoffId);
+  activeRequests.set(requestInfo.requestId, armedRequest);
   const assertion = {
     requestId: armedRequest.handoffId,
     origin: armedRequest.origin,
@@ -136,7 +183,7 @@ chrome.webAuthenticationProxy.onGetRequest.addListener(requestInfo => {
   };
 
   chrome.runtime.sendNativeMessage(HOST, assertion, async response => {
-    if (activeRequestId !== requestInfo.requestId) {
+    if (!activeRequests.has(requestInfo.requestId)) {
       return;
     }
 
@@ -154,13 +201,14 @@ chrome.webAuthenticationProxy.onGetRequest.addListener(requestInfo => {
         responseJson: JSON.stringify(response.assertion),
       });
     } finally {
-      await detach();
+      activeRequests.delete(requestInfo.requestId);
+      await maybeDetach();
     }
   });
 });
 
 chrome.webAuthenticationProxy.onRequestCanceled.addListener(requestId => {
-  if (requestId === activeRequestId) {
-    void detach();
+  if (activeRequests.delete(requestId)) {
+    void maybeDetach();
   }
 });

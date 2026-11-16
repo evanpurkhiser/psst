@@ -357,6 +357,18 @@ mod tests {
     }
 
     #[test]
+    fn extension_tracks_parallel_passkey_requests() {
+        let background = include_str!("../browser-extension/background.js");
+
+        assert!(background.contains("const armingRequests = new Map()"));
+        assert!(background.contains("const armedRequests = new Map()"));
+        assert!(background.contains("const activeRequests = new Map()"));
+        assert!(background.contains("activeRequests.set(requestInfo.requestId"));
+        assert!(background.contains("activeRequests.delete(requestInfo.requestId)"));
+        assert!(background.contains("matches.length !== 1"));
+    }
+
+    #[test]
     fn passkey_prompt_exposes_a_stable_browser_request_id() {
         let relay = include_str!("../browser-extension/relay.js");
         let generated = relay.find("browserRequestId: crypto.randomUUID()").unwrap();
