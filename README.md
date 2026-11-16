@@ -144,32 +144,31 @@ Mount the generated integration paths
 as described in [Container browsers](docs/container-browsers.md).
 
 Open the 1Password share and trigger the site's passkey action.
-The extension shows **Use psst** and **Continue with browser**.
-The prompt exposes a labeled browser request ID before either choice.
-Record it, choose **Use psst**, then pass it to `handoff`:
+The extension shows **Waiting for psst** and **Continue without psst**.
+The prompt exposes a labeled browser request ID.
+Pass it to `handoff` while the prompt waits:
 
 ```console
 $ printf '%s' "$ONEPASSWORD_SHARE_URL" | psst open
 OPAQUE_SESSION_REFERENCE
 $ agent-browser --session work open https://login.example.com
 # Complete the site's identifier steps and trigger its passkey action.
-# Click "Use psst" and read its browser request ID.
+# Read the browser request ID from the waiting prompt.
 $ psst passkey handoff OPAQUE_SESSION_REFERENCE REQUEST_ID
 # Success means psst produced the assertion for that browser request.
 $ psst close OPAQUE_SESSION_REFERENCE
 ```
 
-**Continue with browser** immediately passes the original request to Chrome.
-**Use psst** starts a handoff for that exact request;
-no native host or daemon request is created before that choice.
+**Continue without psst** cancels the psst wait
+and passes the original request to Chrome.
 A handoff authorizes its displayed identifier once,
 waits for the browser to consume it, and expires after one minute.
-Equivalent concurrent requests from the page share the same choice
+Equivalent concurrent requests from the page share the same prompt
 and assertion.
-Each Chrome instance presents one request choice at a time.
+Each Chrome instance presents one request prompt at a time.
 Independent browser instances can complete distinct handoffs concurrently.
 The extension never receives the psst session reference or private key.
-Conditional mediation requests surface the same choice before form submission.
+Conditional mediation requests surface the same prompt before form submission.
 Open the share first when possible; if the prompt or site transaction expires,
 reload the sign-in flow and trigger a new passkey request.
 Silent mediation remains with Chrome because it cannot require user interaction.

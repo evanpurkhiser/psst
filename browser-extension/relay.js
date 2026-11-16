@@ -11,13 +11,13 @@ const failureMessage = response => {
   if (
     ['native_host_unavailable', 'browser_bridge_unavailable'].includes(response?.code)
   ) {
-    return 'psst is not ready. Open a psst session, then try again.';
+    return 'The psst browser integration is unavailable. Continue without psst.';
   }
   if (response?.code === 'browser_peer_unauthorized') {
     return `${response.error}. Add it with psst browser install --peer-uid <UID>.`;
   }
   if (response?.code === 'passkey_handoff_required') {
-    return 'The psst handoff expired. Try psst again or continue with browser.';
+    return 'The psst handoff expired. Start a new passkey request or continue without psst.';
   }
 
   return response?.error || 'The psst handoff failed';
@@ -57,13 +57,9 @@ const useBrowser = async request => {
   respond(request.ids, {code: 'use_browser'});
 };
 
-const usePsst = request => {
+const waitForPsst = request => {
   const requestId = request.browserRequestId;
   request.handoffId = requestId;
-  request.psst.disabled = true;
-  request.browser.focus();
-  request.status.textContent =
-    'Run psst passkey handoff SESSION_REFERENCE with this browser request ID.';
 
   chrome.runtime
     .sendMessage({
@@ -81,19 +77,15 @@ const usePsst = request => {
         return;
       }
 
-      request.psst.disabled = false;
-      request.psst.textContent = 'Try psst again';
       request.status.textContent = failureMessage(response);
-      request.psst.focus();
+      request.browser.focus();
     })
     .catch(() => {
       if (activeRequest !== request || request.ids.size === 0) {
         return;
       }
-      request.psst.disabled = false;
-      request.psst.textContent = 'Try psst again';
       request.status.textContent = 'The psst browser integration is unavailable';
-      request.psst.focus();
+      request.browser.focus();
     });
 };
 
@@ -154,7 +146,7 @@ const showRequest = request => {
 
   const title = document.createElement('h2');
   title.id = 'psst-passkey-title';
-  title.textContent = 'Passkey requested';
+  title.textContent = 'Waiting for psst';
 
   const description = document.createElement('p');
   description.append('A passkey was requested by ');
@@ -165,20 +157,18 @@ const showRequest = request => {
 
   const actions = document.createElement('div');
   actions.className = 'actions';
-  const psst = document.createElement('button');
-  psst.type = 'button';
-  psst.textContent = 'Use psst';
   const browser = document.createElement('button');
   browser.type = 'button';
   browser.className = 'secondary';
-  browser.textContent = 'Continue with browser';
-  actions.append(psst, browser);
+  browser.textContent = 'Continue without psst';
+  actions.append(browser);
 
   const status = document.createElement('p');
   status.className = 'status';
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
-  status.textContent = 'Choose how to complete this passkey request.';
+  status.textContent =
+    'Run psst passkey handoff SESSION_REFERENCE with this browser request ID.';
 
   const requestIdLabel = document.createElement('label');
   requestIdLabel.className = 'request-id';
@@ -198,10 +188,8 @@ const showRequest = request => {
   request.host = host;
   request.previousFocus =
     document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-  request.psst = psst;
   request.browser = browser;
   request.status = status;
-  psst.addEventListener('click', () => usePsst(request));
   browser.addEventListener('click', () => useBrowser(request));
   dialog.addEventListener('keydown', event => {
     if (event.key !== 'Escape') {
@@ -227,7 +215,7 @@ window.addEventListener(REQUEST_EVENT, event => {
     } else {
       respond([id], {
         success: false,
-        error: 'Another passkey request is already awaiting a choice',
+        error: 'Another passkey request is already waiting for psst',
       });
     }
     return;
@@ -240,6 +228,7 @@ window.addEventListener(REQUEST_EVENT, event => {
     browserRequestId: crypto.randomUUID(),
   };
   showRequest(activeRequest);
+  waitForPsst(activeRequest);
 });
 
 window.addEventListener(CANCEL_EVENT, event => {
