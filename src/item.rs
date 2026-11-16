@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use totp_rs::{Totp, TotpError as ProtocolError};
 use url::Url;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     attachment::Attachment,
@@ -268,14 +268,33 @@ fn totp_at(uri: &str, timestamp: u64) -> std::result::Result<String, TotpError> 
 }
 
 fn parse_totp(uri: &str) -> std::result::Result<Totp, ProtocolError> {
+    if !uri.contains("://") {
+        let uri = seed_totp_uri(uri)?;
+
+        return parse_standard_totp(uri.as_str());
+    }
+
     match parse_standard_totp(uri) {
         Err(ProtocolError::SecretNotSet) => {
             let uri = legacy_totp_uri(uri)?;
 
             parse_standard_totp(uri.as_str())
         }
+        Err(ProtocolError::InvalidSecret) => {
+            let uri = normalized_totp_uri(uri)?;
+
+            parse_standard_totp(uri.as_str())
+        }
         result => result,
     }
+}
+
+fn seed_totp_uri(secret: &str) -> std::result::Result<Url, ProtocolError> {
+    let mut uri = Url::parse("otpauth://totp/").map_err(ProtocolError::UrlParse)?;
+    uri.query_pairs_mut()
+        .append_pair("secret", &normalized_secret(secret));
+
+    Ok(uri)
 }
 
 fn parse_standard_totp(uri: &str) -> std::result::Result<Totp, ProtocolError> {
@@ -297,13 +316,42 @@ fn legacy_totp_uri(uri: &str) -> std::result::Result<Url, ProtocolError> {
     let secret = uri
         .path_segments()
         .and_then(|mut segments| segments.find(|segment| !segment.is_empty()))
-        .ok_or(ProtocolError::SecretNotSet)?
-        .to_owned();
+        .ok_or(ProtocolError::SecretNotSet)
+        .map(normalized_secret)?;
 
     uri.set_path("");
     uri.query_pairs_mut().append_pair("secret", &secret);
 
     Ok(uri)
+}
+
+fn normalized_totp_uri(uri: &str) -> std::result::Result<Url, ProtocolError> {
+    let mut uri = Url::parse(uri).map_err(ProtocolError::UrlParse)?;
+    let secret = Zeroizing::new(
+        uri.query_pairs()
+            .find_map(|(key, value)| (key == "secret").then_some(value.into_owned()))
+            .ok_or(ProtocolError::SecretNotSet)?,
+    );
+    let secret = normalized_secret(&secret);
+    let parameters = uri
+        .query_pairs()
+        .filter(|(key, _)| key != "secret")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect::<Vec<_>>();
+
+    uri.set_query(None);
+    uri.query_pairs_mut()
+        .extend_pairs(parameters)
+        .append_pair("secret", &secret);
+
+    Ok(uri)
+}
+
+fn normalized_secret(secret: &str) -> Zeroizing<String> {
+    let mut secret = Zeroizing::new(secret.replace([' ', '='], ""));
+    secret.make_ascii_uppercase();
+
+    secret
 }
 
 fn is_populated(value: &Value) -> bool {
@@ -483,10 +531,27 @@ mod tests {
 
     #[test]
     fn generates_totp_codes_from_short_legacy_secrets() {
-        let uri = "otpauth://totp/GEZDGNBVGY3TQOJQ?digits=8&period=30";
+        let uri = "otpauth://totp/gezdgnbvgy3tqojq====?digits=8&period=30";
         let code = totp_at(uri, 59).expect("legacy 80-bit secret");
 
         assert_eq!(code.len(), 8);
+        assert!(code.chars().all(|character| character.is_ascii_digit()));
+    }
+
+    #[test]
+    fn generates_totp_codes_from_normalized_query_secrets() {
+        let uri = "otpauth://totp/example?secret=gezdgnbvgy3tqojq====&digits=8&period=30";
+        let code = totp_at(uri, 59).expect("padded lowercase secret");
+
+        assert_eq!(code.len(), 8);
+        assert!(code.chars().all(|character| character.is_ascii_digit()));
+    }
+
+    #[test]
+    fn generates_totp_codes_from_bare_secrets() {
+        let code = totp_at("e4dw4xrdq34wd3qw3", 59).expect("bare secret");
+
+        assert_eq!(code.len(), 6);
         assert!(code.chars().all(|character| character.is_ascii_digit()));
     }
 
