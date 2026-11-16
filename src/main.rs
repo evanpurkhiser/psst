@@ -33,6 +33,8 @@ const MAX_JSON_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_DAEMON_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const DAEMON_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const DAEMON_READ_TIMEOUT: Duration = Duration::from_secs(20);
+const PASSKEY_HANDOFF_TIMEOUT: Duration = Duration::from_secs(60);
+const PASSKEY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -99,11 +101,11 @@ enum PasskeyCommand {
         /// Opaque identifier returned by `psst open`.
         session: String,
     },
-    /// Authorize one browser passkey request for up to one minute.
+    /// Complete one browser passkey request and wait for its result.
     Handoff {
         /// Opaque identifier returned by `psst open`.
         session: String,
-        /// Identifier displayed by the psst browser prompt.
+        /// Browser request ID displayed by the psst prompt.
         request_id: String,
     },
 }
@@ -250,13 +252,36 @@ fn run_passkey(command: PasskeyCommand) -> Result<()> {
         PasskeyCommand::Handoff {
             session,
             request_id,
-        } => match request(Request::PasskeyHandoff {
-            session,
-            request_id,
+        } => wait_for_passkey_handoff(session, request_id),
+    }
+}
+
+fn wait_for_passkey_handoff(session: String, request_id: String) -> Result<()> {
+    match request(Request::PasskeyHandoff {
+        session: session.clone(),
+        request_id: request_id.clone(),
+    })? {
+        Response::PasskeyHandoffReady => {}
+        response => return unexpected(response),
+    }
+
+    let deadline = std::time::Instant::now() + PASSKEY_HANDOFF_TIMEOUT;
+    loop {
+        match request(Request::PasskeyHandoffStatus {
+            session: session.clone(),
+            request_id: request_id.clone(),
         })? {
-            Response::PasskeyHandoffReady => Ok(()),
-            response => unexpected(response),
-        },
+            Response::PasskeyHandoffPending => {}
+            Response::PasskeyHandoffComplete => return Ok(()),
+            response => return unexpected(response),
+        }
+
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining <= PASSKEY_POLL_INTERVAL {
+            thread::sleep(remaining);
+            return Err(Error::PasskeyHandoffExpired);
+        }
+        thread::sleep(PASSKEY_POLL_INTERVAL);
     }
 }
 

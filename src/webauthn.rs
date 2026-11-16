@@ -165,6 +165,10 @@ impl Passkey {
         }
     }
 
+    pub fn validate(&self) -> Result<()> {
+        decode_signing_key(&self.private_key).map(drop)
+    }
+
     pub fn assert(&self, request: &AssertionRequest) -> Result<Assertion> {
         let origin = validate_origin(&request.origin, &self.rp_id)?;
         validate_request(request, &self.credential_id, &self.rp_id)?;
@@ -363,6 +367,15 @@ mod tests {
 
         assert_eq!(passkey.describe().credential_id, "Y3JlZGVudGlhbA");
         assert_eq!(passkey.describe().rp_id, "example.com");
+    }
+
+    #[test]
+    fn validates_the_private_key_before_browser_handoff() {
+        assert!(passkey().validate().is_ok());
+
+        let mut passkey = passkey();
+        passkey.private_key = "invalid".into();
+        assert!(matches!(passkey.validate(), Err(Error::PasskeyKey)));
     }
 
     #[test]

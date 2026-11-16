@@ -34,6 +34,10 @@ pub enum Request {
         session: String,
         request_id: String,
     },
+    PasskeyHandoffStatus {
+        session: String,
+        request_id: String,
+    },
     PasskeyBrowserAssert {
         request: AssertionRequest,
     },
@@ -53,9 +57,9 @@ impl Drop for Request {
                 session.zeroize();
                 field.zeroize();
             }
-            Self::PasskeyAssert { session, .. } | Self::PasskeyHandoff { session, .. } => {
-                session.zeroize()
-            }
+            Self::PasskeyAssert { session, .. }
+            | Self::PasskeyHandoff { session, .. }
+            | Self::PasskeyHandoffStatus { session, .. } => session.zeroize(),
             Self::PasskeyBrowserAssert { .. } => {}
         }
     }
@@ -71,6 +75,8 @@ pub enum Response {
     PasskeyCredential { credential: CredentialSummary },
     PasskeyAssertion { assertion: Assertion },
     PasskeyHandoffReady,
+    PasskeyHandoffPending,
+    PasskeyHandoffComplete,
     Closed,
     Error { code: String, message: String },
 }
