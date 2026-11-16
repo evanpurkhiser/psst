@@ -119,16 +119,17 @@ Normal handoffs do not reinstall browser files.
 For initial setup:
 
 ```bash
-psst browser install --peer-uid 65534
-psst browser status
+psst integration install chrome --peer-uid 65534
+psst integration status chrome
 ```
 
 Rootless containers commonly appear as UID 65534 to the host.
 If the browser reports a different rejected peer UID,
-add that value with another `psst browser install --peer-uid UID` invocation.
-`browser status` reports generated artifact presence and configured peers;
-it does not probe Chrome or daemon connectivity.
+add that value with another `psst integration install chrome --peer-uid UID`
+invocation.
+`psst integration status chrome` reports generated artifact presence
+and configured peers; it does not probe Chrome or daemon connectivity.
 Container browsers also require the mounts documented with the installed psst
 release.
-`psst browser reset` clears the container peer allowlist.
+`psst integration reset chrome` clears the container peer allowlist.
 Setup changes are infrastructure work, separate from consuming a shared item.

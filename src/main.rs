@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use systemd_zbus::zbus::{blocking::Connection, zvariant::Value};
 use systemd_zbus::{ManagerProxyBlocking, Mode};
 use zeroize::Zeroizing;
@@ -73,10 +73,10 @@ enum Command {
         #[command(subcommand)]
         command: PasskeyCommand,
     },
-    /// Install the signed Chrome integration for a container browser.
-    Browser {
+    /// Install and inspect external integrations.
+    Integration {
         #[command(subcommand)]
-        command: BrowserCommand,
+        command: IntegrationCommand,
     },
     /// Print the version-matched usage skill for agents and automation.
     Skill,
@@ -111,17 +111,23 @@ enum PasskeyCommand {
 }
 
 #[derive(Subcommand)]
-enum BrowserCommand {
-    /// Install or refresh the signed container browser integration.
+enum IntegrationCommand {
+    /// Install or refresh an integration.
     Install {
+        integration: Integration,
         /// Additional host UID permitted to use the container browser bridge.
         #[arg(long = "peer-uid", value_name = "UID")]
         allowed_peer_uids: Vec<u32>,
     },
-    /// Report generated browser artifacts and peer authorization.
-    Status,
+    /// Report an integration's generated artifacts and configuration.
+    Status { integration: Integration },
     /// Clear all container browser peer authorization.
-    Reset,
+    Reset { integration: Integration },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Integration {
+    Chrome,
 }
 
 fn main() {
@@ -202,7 +208,7 @@ fn run(command: Command) -> Result<()> {
             request_attachment(Request::Download { session, field }, &mut stdout)
         }
         Command::Passkey { command } => run_passkey(command),
-        Command::Browser { command } => run_browser(command),
+        Command::Integration { command } => run_integration(command),
         Command::Skill => skill::write(std::io::stdout().lock()),
         Command::Close { session } => match request(Request::Close { session })? {
             Response::Closed => Ok(()),
@@ -285,15 +291,22 @@ fn wait_for_passkey_handoff(session: String, request_id: String) -> Result<()> {
     }
 }
 
-fn run_browser(command: BrowserCommand) -> Result<()> {
+fn run_integration(command: IntegrationCommand) -> Result<()> {
     match command {
-        BrowserCommand::Install { allowed_peer_uids } => browser::install(&allowed_peer_uids),
-        BrowserCommand::Status => {
+        IntegrationCommand::Install {
+            integration: Integration::Chrome,
+            allowed_peer_uids,
+        } => browser::install(&allowed_peer_uids),
+        IntegrationCommand::Status {
+            integration: Integration::Chrome,
+        } => {
             serde_json::to_writer_pretty(std::io::stdout().lock(), &browser::status()?)?;
             println!();
             Ok(())
         }
-        BrowserCommand::Reset => browser::reset_peers(),
+        IntegrationCommand::Reset {
+            integration: Integration::Chrome,
+        } => browser::reset_peers(),
     }
 }
 
@@ -485,5 +498,20 @@ mod tests {
             format!("error cli_usage: {message}")
                 .starts_with("error cli_usage: unrecognized subcommand")
         );
+    }
+
+    #[test]
+    fn chrome_setup_uses_the_integration_namespace() {
+        assert!(matches!(
+            Cli::try_parse_from(["psst", "integration", "status", "chrome"]),
+            Ok(Cli {
+                command: Command::Integration {
+                    command: IntegrationCommand::Status {
+                        integration: Integration::Chrome
+                    }
+                }
+            })
+        ));
+        assert!(Cli::try_parse_from(["psst", "browser", "status"]).is_err());
     }
 }
