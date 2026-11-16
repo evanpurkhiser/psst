@@ -381,7 +381,13 @@ mod tests {
 
         assert!(generated < shown);
         assert!(relay.contains("requestId.value = request.browserRequestId"));
-        assert!(relay.contains("aria-label', 'Browser request ID"));
+        assert!(relay.contains("document.createElement('dialog')"));
+        assert!(relay.contains("document.createElement('label')"));
+        assert!(relay.contains("document.createElement('output')"));
+        assert!(relay.contains("requestIdLabel.append(requestId)"));
+        assert!(!relay.contains("setAttribute('role'"));
+        assert!(!relay.contains("setAttribute('aria-live'"));
+        assert!(!relay.contains("setAttribute('aria-label'"));
         assert!(relay.contains("requestId.readOnly = true"));
         assert!(!relay.contains("navigator.clipboard"));
         assert!(wait_for_psst.contains("const requestId = request.browserRequestId"));

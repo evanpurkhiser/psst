@@ -94,54 +94,40 @@ const showRequest = request => {
   const shadow = host.attachShadow({mode: 'closed'});
   const style = document.createElement('style');
   style.textContent = `
-    :host { all: initial; }
-    .dialog {
-      background: #17151c;
-      border: 1px solid #6c5fc7;
-      border-radius: 10px;
-      box-shadow: 0 12px 36px rgb(0 0 0 / 45%);
-      color: #f6f3ff;
-      font: 14px/1.45 system-ui, sans-serif;
-      inset: 16px 16px auto auto;
-      max-width: 390px;
-      padding: 16px;
+    :host {
+      all: initial;
+      color-scheme: light dark;
+    }
+    dialog {
+      border: 1px solid GrayText;
+      border-radius: 0.5rem;
+      box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 25%);
+      font: 0.875rem/1.5 system-ui, sans-serif;
+      inset: 1rem 1rem auto auto;
+      margin: 0;
+      max-width: min(24rem, calc(100vw - 2rem));
+      padding: 1rem;
       position: fixed;
       z-index: 2147483647;
     }
-    h2 { font: 600 16px/1.3 system-ui, sans-serif; margin: 0 0 8px; }
-    p { margin: 0 0 12px; overflow-wrap: anywhere; }
-    .origin { color: #c8c0ef; font-family: ui-monospace, monospace; }
-    .actions { display: flex; gap: 8px; }
-    button {
-      background: #6c5fc7;
-      border: 0;
-      border-radius: 6px;
-      color: white;
-      cursor: pointer;
-      font: 600 14px/1 system-ui, sans-serif;
-      padding: 10px 12px;
-    }
-    button.secondary { background: #3a3643; }
-    button:disabled { cursor: wait; opacity: 0.55; }
-    .status { color: #d8d2e8; margin: 12px 0 0; }
-    .request-id { display: block; margin: 12px 0 0; }
-    .request-id span { display: block; font-size: 12px; margin-bottom: 4px; }
+    h2 { margin: 0 0 0.5rem; }
+    p { margin: 0 0 0.75rem; }
+    label { display: grid; gap: 0.25rem; margin-block: 1rem; }
+    input, button { font: inherit; }
     input {
-      background: #292530;
-      border: 1px solid #6c5fc7;
-      border-radius: 4px;
       box-sizing: border-box;
-      color: #f6f3ff;
-      flex: 1;
-      font: 12px/1.4 ui-monospace, monospace;
-      min-width: 0;
-      padding: 6px;
+      padding: 0.5rem;
+      width: 100%;
+    }
+    footer { margin-top: 1rem; }
+    button {
+      cursor: pointer;
+      padding: 0.5rem 0.75rem;
     }
   `;
 
-  const dialog = document.createElement('section');
-  dialog.className = 'dialog';
-  dialog.setAttribute('role', 'dialog');
+  const dialog = document.createElement('dialog');
+  dialog.open = true;
   dialog.setAttribute('aria-labelledby', 'psst-passkey-title');
 
   const title = document.createElement('h2');
@@ -150,38 +136,29 @@ const showRequest = request => {
 
   const description = document.createElement('p');
   description.append('A passkey was requested by ');
-  const origin = document.createElement('span');
-  origin.className = 'origin';
+  const origin = document.createElement('code');
   origin.textContent = location.origin;
   description.append(origin, ` for ${request.request.rpId}.`);
 
-  const actions = document.createElement('div');
-  actions.className = 'actions';
+  const footer = document.createElement('footer');
   const browser = document.createElement('button');
   browser.type = 'button';
-  browser.className = 'secondary';
   browser.textContent = 'Continue without psst';
-  actions.append(browser);
+  footer.append(browser);
 
-  const status = document.createElement('p');
-  status.className = 'status';
-  status.setAttribute('role', 'status');
-  status.setAttribute('aria-live', 'polite');
+  const status = document.createElement('output');
   status.textContent =
     'Run psst passkey handoff SESSION_REFERENCE with this browser request ID.';
 
   const requestIdLabel = document.createElement('label');
-  requestIdLabel.className = 'request-id';
-  const requestIdText = document.createElement('span');
-  requestIdText.textContent = 'Browser request ID';
+  requestIdLabel.append('Browser request ID');
   const requestId = document.createElement('input');
   requestId.type = 'text';
   requestId.readOnly = true;
   requestId.value = request.browserRequestId;
-  requestId.setAttribute('aria-label', 'Browser request ID');
-  requestIdLabel.append(requestIdText, requestId);
+  requestIdLabel.append(requestId);
 
-  dialog.append(title, description, actions, requestIdLabel, status);
+  dialog.append(title, description, requestIdLabel, status, footer);
   shadow.append(style, dialog);
   document.documentElement.append(host);
 
