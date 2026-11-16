@@ -5,21 +5,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use psst::{EXTENSION_ORIGIN, NATIVE_HOST};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::error::{Error, Result};
-
-pub const EXTENSION_ORIGIN: &str = "chrome-extension://mmehefpkhobgphfjkjlnebgbgfbmmmca/";
-pub const NATIVE_HOST: &str = "com.evanpurkhiser.psst";
 
 const MANIFEST: &str = include_str!("../browser-extension/manifest.json");
 const BACKGROUND: &str = include_str!("../browser-extension/background.js");
 const RELAY: &str = include_str!("../browser-extension/relay.js");
 const BRIDGE: &str = include_str!("../browser-extension/bridge.js");
 const CONTAINER_ROOT: &str = "/opt/psst";
-const NATIVE_HOST_PROXY: &[u8] =
-    b"#!/bin/sh\nexec /opt/psst/native-host-bin native-host-proxy \"$@\"\n";
+const NATIVE_HOST_PROXY: &[u8] = b"#!/bin/sh\nexec /opt/psst/browser-bridge \"$@\"\n";
 
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +28,7 @@ pub struct Installation {
     pub extension: PathBuf,
 }
 
+#[derive(Clone, Copy)]
 pub enum PeerConfiguration<'a> {
     Preserve,
     Replace(&'a [u32]),
@@ -43,8 +41,8 @@ pub struct BrowserStatus {
     extension_installed: bool,
     native_host_proxy: PathBuf,
     native_host_proxy_installed: bool,
-    native_host_binary: PathBuf,
-    native_host_binary_installed: bool,
+    browser_bridge: PathBuf,
+    browser_bridge_installed: bool,
     native_host_manifests: Vec<PathBuf>,
     native_host_manifests_installed: bool,
     container_native_host_manifest: PathBuf,
@@ -55,7 +53,7 @@ pub struct BrowserStatus {
 struct BrowserPaths {
     extension: PathBuf,
     native_host_proxy: PathBuf,
-    native_host_binary: PathBuf,
+    browser_bridge: PathBuf,
     native_host_manifests: Vec<PathBuf>,
     container_native_host_manifest: PathBuf,
     config: PathBuf,
@@ -67,6 +65,10 @@ pub fn is_extension_origin(value: &str) -> bool {
 
 pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation> {
     let paths = paths()?;
+    let allowed_peer_uids = match peer_configuration {
+        PeerConfiguration::Preserve => config()?.allowed_peer_uids,
+        PeerConfiguration::Replace(allowed_peer_uids) => allowed_peer_uids.to_vec(),
+    };
 
     write_if_changed(paths.extension.join("manifest.json"), MANIFEST.as_bytes())?;
     write_if_changed(paths.extension.join("background.js"), BACKGROUND.as_bytes())?;
@@ -74,9 +76,6 @@ pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation
     write_if_changed(paths.extension.join("bridge.js"), BRIDGE.as_bytes())?;
 
     let executable = env::current_exe()?.canonicalize()?;
-    write_executable_if_changed(&paths.native_host_proxy, NATIVE_HOST_PROXY)?;
-    copy_executable_if_changed(&executable, &paths.native_host_binary)?;
-
     let native_manifest = serde_json::to_vec_pretty(&json!({
         "name": NATIVE_HOST,
         "description": "psst passkey native messaging host",
@@ -88,22 +87,26 @@ pub fn install(peer_configuration: PeerConfiguration<'_>) -> Result<Installation
         write_if_changed(manifest.clone(), &native_manifest)?;
     }
 
-    let container_manifest = serde_json::to_vec_pretty(&json!({
-        "name": NATIVE_HOST,
-        "description": "psst passkey native messaging host",
-        "path": format!("{CONTAINER_ROOT}/native-host"),
-        "type": "stdio",
-        "allowed_origins": [EXTENSION_ORIGIN],
-    }))?;
-    write_if_changed(
-        paths.container_native_host_manifest.clone(),
-        &container_manifest,
-    )?;
+    if !allowed_peer_uids.is_empty() {
+        let browser_bridge_executable = browser_bridge_executable(&executable)?;
+        write_executable_if_changed(&paths.native_host_proxy, NATIVE_HOST_PROXY)?;
+        copy_executable_if_changed(&browser_bridge_executable, &paths.browser_bridge)?;
 
-    if let PeerConfiguration::Replace(allowed_peer_uids) = peer_configuration {
-        let config = BrowserConfig {
-            allowed_peer_uids: allowed_peer_uids.to_vec(),
-        };
+        let container_manifest = serde_json::to_vec_pretty(&json!({
+            "name": NATIVE_HOST,
+            "description": "psst passkey native messaging host",
+            "path": format!("{CONTAINER_ROOT}/native-host"),
+            "type": "stdio",
+            "allowed_origins": [EXTENSION_ORIGIN],
+        }))?;
+        write_if_changed(
+            paths.container_native_host_manifest.clone(),
+            &container_manifest,
+        )?;
+    }
+
+    if matches!(peer_configuration, PeerConfiguration::Replace(_)) {
+        let config = BrowserConfig { allowed_peer_uids };
         write_if_changed(paths.config, &serde_json::to_vec_pretty(&config)?)?;
     }
 
@@ -124,10 +127,10 @@ pub fn status() -> Result<BrowserStatus> {
     Ok(BrowserStatus {
         extension_installed: paths.extension.join("manifest.json").is_file(),
         native_host_proxy_installed: paths.native_host_proxy.is_file(),
-        native_host_binary_installed: paths.native_host_binary.is_file(),
+        browser_bridge_installed: paths.browser_bridge.is_file(),
         extension: paths.extension,
         native_host_proxy: paths.native_host_proxy,
-        native_host_binary: paths.native_host_binary,
+        browser_bridge: paths.browser_bridge,
         native_host_manifests: paths.native_host_manifests,
         native_host_manifests_installed,
         container_native_host_manifest: paths.container_native_host_manifest,
@@ -195,6 +198,15 @@ fn copy_executable_if_changed(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+fn browser_bridge_executable(executable: &Path) -> Result<PathBuf> {
+    let browser_bridge = executable.with_file_name("psst-browser-bridge");
+    if !browser_bridge.is_file() {
+        return Err(Error::BrowserBridgeUnavailable(browser_bridge));
+    }
+
+    Ok(browser_bridge.canonicalize()?)
+}
+
 fn files_equal(left: &Path, right: &Path) -> Result<bool> {
     let left_metadata = fs::metadata(left)?;
     let right_metadata = match fs::metadata(right) {
@@ -260,7 +272,7 @@ fn paths() -> Result<BrowserPaths> {
     Ok(BrowserPaths {
         extension: data_home.join("psst/chrome-extension"),
         native_host_proxy: data_home.join("psst/native-host"),
-        native_host_binary: data_home.join("psst/native-host-bin"),
+        browser_bridge: data_home.join("psst/browser-bridge"),
         native_host_manifests,
         container_native_host_manifest: data_home
             .join("psst/container-native-host")
@@ -278,9 +290,21 @@ mod tests {
         let manifest: serde_json::Value = serde_json::from_str(MANIFEST).unwrap();
 
         assert_eq!(manifest["manifest_version"], 3);
-        assert_eq!(manifest["permissions"], json!(["nativeMessaging"]));
+        assert_eq!(
+            manifest["permissions"],
+            json!(["nativeMessaging", "webAuthenticationProxy"])
+        );
+        assert_eq!(manifest["minimum_chrome_version"], "115");
         assert_eq!(manifest["content_scripts"][0]["world"], "ISOLATED");
         assert_eq!(manifest["content_scripts"][1]["world"], "MAIN");
+    }
+
+    #[test]
+    fn bundled_extension_returns_credentials_through_chrome() {
+        assert!(BACKGROUND.contains("webAuthenticationProxy.completeGetRequest"));
+        assert!(BACKGROUND.contains("responseJson: JSON.stringify(response.assertion)"));
+        assert!(BRIDGE.contains("Reflect.apply(nativeGet"));
+        assert!(!BRIDGE.contains("const credential ="));
     }
 
     #[test]
@@ -289,10 +313,23 @@ mod tests {
     }
 
     #[test]
-    fn container_native_host_invokes_the_rust_proxy() {
+    fn container_native_host_invokes_the_browser_bridge() {
         let proxy = str::from_utf8(NATIVE_HOST_PROXY).unwrap();
 
-        assert!(proxy.contains("native-host-bin native-host-proxy"));
+        assert!(proxy.contains("exec /opt/psst/browser-bridge \"$@\""));
         assert!(!proxy.contains("python"));
+    }
+
+    #[test]
+    fn browser_bridge_is_resolved_next_to_the_cli() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("psst");
+        let browser_bridge = directory.path().join("psst-browser-bridge");
+        fs::write(&browser_bridge, []).unwrap();
+
+        assert_eq!(
+            browser_bridge_executable(&executable).unwrap(),
+            browser_bridge.canonicalize().unwrap()
+        );
     }
 }

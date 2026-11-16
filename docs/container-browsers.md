@@ -6,6 +6,17 @@ assertion requests only.
 The daemon checks the connecting process UID
 and never serves the normal session protocol on this socket.
 
+Install `psst-browser-bridge` next to `psst`.
+Repository and package builds can produce the static musl executable with:
+
+```console
+mise run build-browser-bridge
+install -Dm755 target/x86_64-unknown-linux-musl/release/psst-browser-bridge ~/.cargo/bin/psst-browser-bridge
+```
+
+The build task selects the musl target for the current architecture
+and prints the resulting executable path.
+
 Install the browser files and configure the UID that the host observes
 for the container's browser process:
 

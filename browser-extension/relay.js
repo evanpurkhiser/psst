@@ -1,6 +1,9 @@
 const REQUEST_EVENT = "psst-passkey-request";
 const RESPONSE_EVENT = "psst-passkey-response";
 const CANCEL_EVENT = "psst-passkey-cancel";
+const PROXY_READY_EVENT = "psst-passkey-proxy-ready";
+const PROXY_SETTLED_EVENT = "psst-passkey-proxy-settled";
+const FALLBACK_EVENT = "psst-passkey-fallback";
 
 let activeRequest;
 
@@ -33,28 +36,42 @@ const closeRequest = request => {
   if (request.previousFocus?.isConnected) request.previousFocus.focus();
 };
 
-const useBrowser = request => {
+const useBrowser = async request => {
+  const [id] = request.ids;
+  if (request.handoffId) {
+    window.dispatchEvent(new CustomEvent(FALLBACK_EVENT, { detail: { id } }));
+    try {
+      await chrome.runtime.sendMessage({
+        type: "psst.webauthn.cancel",
+        requestId: request.handoffId,
+      });
+    } catch (_) {
+      // The native browser flow can still proceed if the worker was unloaded.
+    }
+  }
+
   closeRequest(request);
   respond(request.ids, { code: "use_browser" });
 };
 
 const usePsst = request => {
   const requestId = crypto.randomUUID();
+  request.handoffId = requestId;
   request.psst.disabled = true;
   request.browser.focus();
   request.status.textContent = `psst handoff ${requestId} is waiting. Run psst passkey handoff <session> ${requestId}`;
 
   chrome.runtime
     .sendMessage({
-      type: "psst.webauthn.assert",
+      type: "psst.webauthn.arm",
       requestId,
       request: request.request,
     })
     .then(response => {
       if (activeRequest !== request || request.ids.size === 0) return;
       if (response?.success) {
-        closeRequest(request);
-        respond(request.ids, response);
+        const [id] = request.ids;
+        window.dispatchEvent(new CustomEvent(PROXY_READY_EVENT, { detail: { id } }));
         return;
       }
 
@@ -189,5 +206,19 @@ window.addEventListener(CANCEL_EVENT, event => {
   if (!activeRequest || typeof id !== "string") return;
 
   activeRequest.ids.delete(id);
-  if (activeRequest.ids.size === 0) closeRequest(activeRequest);
+  if (activeRequest.ids.size !== 0) return;
+
+  const request = activeRequest;
+  closeRequest(request);
+  if (request.handoffId) {
+    void chrome.runtime.sendMessage({
+      type: "psst.webauthn.cancel",
+      requestId: request.handoffId,
+    });
+  }
+});
+
+window.addEventListener(PROXY_SETTLED_EVENT, event => {
+  if (!activeRequest || !activeRequest.ids.has(event.detail?.id)) return;
+  closeRequest(activeRequest);
 });
