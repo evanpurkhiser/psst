@@ -45,7 +45,7 @@ struct Cli {
 enum Command {
     /// Read a 1Password share link from stdin and create a five-minute session.
     Open,
-    /// List populated fields without their values.
+    /// List available fields and passkey metadata without secret values.
     Fields {
         /// Opaque identifier returned by `psst open`.
         session: String,

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 use crate::{
-    item::{FieldSummary, SecretValue},
+    item::{ItemSummary, SecretValue},
     webauthn::{Assertion, AssertionRequest, CredentialSummary},
 };
 
@@ -65,7 +65,7 @@ impl Drop for Request {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Response {
     Opened { session: String },
-    Fields { fields: Vec<FieldSummary> },
+    Fields { fields: Vec<ItemSummary> },
     Secret { value: SecretValue },
     Attachment { size: u64 },
     PasskeyCredential { credential: CredentialSummary },

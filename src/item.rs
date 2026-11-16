@@ -13,7 +13,15 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     attachment::Attachment,
     error::{Error, Result, TotpError},
+    webauthn::CredentialSummary,
 };
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ItemSummary {
+    Field(FieldSummary),
+    Passkey(PasskeySummary),
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FieldSummary {
@@ -25,6 +33,25 @@ pub struct FieldSummary {
     pub filename: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasskeySummary {
+    #[serde(rename = "type")]
+    kind: String,
+    credential_id: String,
+    rp_id: String,
+}
+
+impl From<CredentialSummary> for PasskeySummary {
+    fn from(credential: CredentialSummary) -> Self {
+        Self {
+            kind: "passkey".into(),
+            credential_id: credential.credential_id,
+            rp_id: credential.rp_id,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -118,6 +145,13 @@ pub fn list_fields(json: &[u8]) -> Result<Vec<FieldSummary>> {
             }
         })
         .collect())
+}
+
+pub fn list_items(json: &[u8], passkey: Option<CredentialSummary>) -> Result<Vec<ItemSummary>> {
+    let fields = list_fields(json)?.into_iter().map(ItemSummary::Field);
+    let passkey = passkey.map(PasskeySummary::from).map(ItemSummary::Passkey);
+
+    Ok(fields.chain(passkey).collect())
 }
 
 pub fn get_field(json: &[u8], selector: &str) -> Result<SecretValue> {
@@ -406,6 +440,29 @@ mod tests {
                 "selector": "username",
                 "label": "username",
                 "type": "string"
+            })
+        );
+    }
+
+    #[test]
+    fn lists_passkeys_after_normal_fields() {
+        let fields = list_items(
+            DETAILS,
+            Some(CredentialSummary {
+                credential_id: "Y3JlZGVudGlhbA".into(),
+                rp_id: "example.com".into(),
+                credential_type: "public-key".into(),
+            }),
+        )
+        .expect("valid item details");
+
+        assert_eq!(fields.len(), 4);
+        assert_eq!(
+            serde_json::to_value(&fields[3]).expect("serializable summary"),
+            serde_json::json!({
+                "type": "passkey",
+                "credentialId": "Y3JlZGVudGlhbA",
+                "rpId": "example.com"
             })
         );
     }

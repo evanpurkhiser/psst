@@ -319,10 +319,12 @@ fn handle(request: Request, state: &mut State) -> Result<(Response, Option<Zeroi
         }
         Request::Fields { ref session } => {
             let session = active_session(&state.sessions, session)?;
+            let overview = session.decrypt_overview()?;
             let details = session.decrypt_details()?;
+            let passkey = crate::webauthn::Passkey::describe_item(&overview, &details)?;
             Ok((
                 Response::Fields {
-                    fields: item::list_fields(&details)?,
+                    fields: item::list_items(&details, passkey)?,
                 },
                 None,
             ))

@@ -111,9 +111,26 @@ impl Passkey {
     pub fn from_item(overview: &[u8], details: &[u8]) -> Result<Self> {
         let overview: Overview = serde_json::from_slice(overview)?;
         let details: Details = serde_json::from_slice(details)?;
-        let mut overview = overview.passkey.ok_or(Error::PasskeyUnavailable)?;
-        let mut details = details.passkey.ok_or(Error::PasskeyUnavailable)?;
+        Self::from_parts(
+            overview.passkey.ok_or(Error::PasskeyUnavailable)?,
+            details.passkey.ok_or(Error::PasskeyUnavailable)?,
+        )
+    }
 
+    pub fn describe_item(overview: &[u8], details: &[u8]) -> Result<Option<CredentialSummary>> {
+        let overview: Overview = serde_json::from_slice(overview)?;
+        let details: Details = serde_json::from_slice(details)?;
+
+        match (overview.passkey, details.passkey) {
+            (None, None) => Ok(None),
+            (Some(overview), Some(details)) => {
+                Ok(Some(Self::from_parts(overview, details)?.describe()))
+            }
+            _ => Err(Error::PasskeyUnavailable),
+        }
+    }
+
+    fn from_parts(mut overview: PasskeyOverview, mut details: PasskeyDetails) -> Result<Self> {
         if details.kind != "webauthn" {
             return Err(Error::UnsupportedPasskey);
         }
@@ -346,6 +363,22 @@ mod tests {
 
         assert_eq!(passkey.describe().credential_id, "Y3JlZGVudGlhbA");
         assert_eq!(passkey.describe().rp_id, "example.com");
+    }
+
+    #[test]
+    fn describes_optional_passkeys_for_item_listing() {
+        let overview = br#"{"passkey":{"credentialId":"Y3JlZGVudGlhbA","rpId":"example.com"}}"#;
+        let details = br#"{"passkey":{"type":"webauthn","createdAt":1,"privateKey":"key","userHandle":"dXNlcg"},"sections":[]}"#;
+        let credential = Passkey::describe_item(overview, details)
+            .expect("valid item")
+            .expect("passkey");
+
+        assert_eq!(credential.rp_id, "example.com");
+        assert!(
+            Passkey::describe_item(br#"{}"#, br#"{"sections":[]}"#)
+                .expect("valid item")
+                .is_none()
+        );
     }
 
     #[test]
