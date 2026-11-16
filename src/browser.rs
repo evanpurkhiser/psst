@@ -371,8 +371,8 @@ mod tests {
         let relay = include_str!("../browser-extension/relay.js");
         let generated = relay.find("browserRequestId: crypto.randomUUID()").unwrap();
         let shown = relay.find("showRequest(activeRequest)").unwrap();
-        let use_psst = relay
-            .split_once("const usePsst = request =>")
+        let wait_for_psst = relay
+            .split_once("const waitForPsst = request =>")
             .unwrap()
             .1
             .split_once("const showRequest = request =>")
@@ -384,9 +384,12 @@ mod tests {
         assert!(relay.contains("aria-label', 'Browser request ID"));
         assert!(relay.contains("requestId.readOnly = true"));
         assert!(!relay.contains("navigator.clipboard"));
-        assert!(use_psst.contains("const requestId = request.browserRequestId"));
-        assert!(!use_psst.contains("closeRequest"));
-        assert!(!use_psst.contains("crypto.randomUUID"));
+        assert!(wait_for_psst.contains("const requestId = request.browserRequestId"));
+        assert!(!wait_for_psst.contains("closeRequest"));
+        assert!(!wait_for_psst.contains("crypto.randomUUID"));
+        assert!(relay.contains("waitForPsst(activeRequest)"));
+        assert!(relay.contains("Continue without psst"));
+        assert!(!relay.contains("Use psst"));
     }
 
     #[test]

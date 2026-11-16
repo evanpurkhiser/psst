@@ -77,26 +77,26 @@ and offers no arbitrary-byte signing operation.
 
 ## Browser bridge
 
-The Chrome extension arms Chrome's Web Authentication proxy after the user
-or browser driver chooses **Use psst**.
-Chrome then serializes the live challenge, relying-party ID,
+The Chrome extension arms Chrome's Web Authentication proxy
+when a page requests a passkey.
+Chrome serializes the live challenge, relying-party ID,
 and credential allow list for the extension.
 The extension combines them with the top-level page origin
 and forwards the assertion request through Chrome native messaging.
-**Continue with browser** passes the original call to Chrome without contacting
-psst.
-The extension shows a labeled request identifier before the user chooses psst,
+**Continue without psst** cancels the psst wait
+and passes the original call to Chrome.
+The extension shows a labeled request identifier,
 and `passkey handoff` authorizes only that identifier for one minute.
 The CLI waits for the matching assertion and reports its failure or completion.
-Equivalent concurrent calls from one page share a choice and assertion.
-Each Chrome instance presents one choice at a time,
+Equivalent concurrent calls from one page share a prompt and assertion.
+Each Chrome instance presents one prompt at a time,
 while separate browser instances can complete distinct handoffs concurrently.
 
-Conditional mediation requests use this choice
+Conditional mediation requests use this prompt
 so browser drivers can request a shared passkey while the login form is active.
 Silent mediation stays native and never creates a psst prompt.
-The proxy is attached only for the selected request and detached
-after completion or cancellation.
+The proxy is attached only for the waiting request and detached after completion
+or cancellation.
 Chrome converts the returned assertion JSON into the native
 `PublicKeyCredential` received by the page.
 

@@ -73,13 +73,14 @@ Retrieve only the fields required for the task.
 
 The browser integration must already be installed.
 Trigger the site's normal passkey action.
-The browser displays **Use psst** and **Continue with browser**.
-Conditional mediation may display this choice as soon as the login form loads.
-Open and inspect the shared item before choosing **Use psst** when possible.
+The browser displays **Waiting for psst** and **Continue without psst**.
+Conditional mediation may display this prompt as soon as the login form loads.
+Open and inspect the shared item before triggering the site's passkey action
+when possible.
 If the prompt or site transaction times out while waiting for the share,
 reload the sign-in flow and trigger a new passkey request.
-The prompt exposes a labeled browser request ID before either choice.
-Record it, choose **Use psst**, and hand off that exact request:
+The prompt exposes a labeled browser request ID.
+Hand off that exact request while the prompt waits:
 
 ```bash
 # Complete the identifier step or click the site's passkey button.
@@ -87,14 +88,13 @@ psst passkey handoff SESSION_REFERENCE REQUEST_ID
 # Success means psst produced the assertion for that browser request.
 ```
 
-**Continue with browser** immediately uses Chrome's normal passkey flow.
-**Use psst** uses the displayed request ID and starts waiting
-for the CLI handoff.
+The extension starts Chrome's passkey request and waits
+for the displayed request ID to be handed off.
 `psst passkey handoff` waits for the browser to consume that authorization
 and returns an error when assertion generation or validation fails.
 Verify the site's resulting navigation or signed-in state
 before closing the session.
-After the browser choice, Chrome supplies the live challenge, relying-party ID,
+Chrome supplies the live challenge, relying-party ID,
 and credential allow list through its Web Authentication proxy.
 The extension combines them with the live origin
 and sends the assertion request through Chrome native messaging.
@@ -102,8 +102,8 @@ The daemon validates them and returns the WebAuthn assertion;
 neither the browser extension nor its caller receives the session identifier
 or private key.
 
-**Continue with browser** remains available while the chooser is open.
-Choosing it after starting the CLI handoff causes that command to expire.
+**Continue without psst** cancels the psst wait
+and uses Chrome's normal passkey flow.
 If Chrome rejects the completed assertion,
 trigger the site's passkey action again for a new request.
 Each handoff is one-shot, including when its request fails WebAuthn validation.
