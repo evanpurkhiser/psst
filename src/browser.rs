@@ -6,19 +6,13 @@ use std::{
 };
 
 use psst::{EXTENSION_ID, EXTENSION_ORIGIN, NATIVE_HOST};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 
 use crate::error::{Error, Result};
 
 const CONTAINER_ROOT: &str = "/opt/psst";
 const CONTAINER_EXTENSION_CRX: &str = "/opt/psst/chrome-extension.crx";
-
-#[derive(Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BrowserConfig {
-    pub allowed_peer_uids: Vec<u32>,
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,7 +25,6 @@ pub struct BrowserStatus {
     container_native_host_manifest_present: bool,
     container_external_extension_manifest: PathBuf,
     container_external_extension_manifest_present: bool,
-    allowed_peer_uids: Vec<u32>,
 }
 
 struct BrowserPaths {
@@ -41,17 +34,17 @@ struct BrowserPaths {
     browser_extension_crx: PathBuf,
     container_native_host_manifest: PathBuf,
     container_external_extension_manifest: PathBuf,
-    config: PathBuf,
+    legacy_config: PathBuf,
 }
 
-pub fn install(additional_peer_uids: &[u32]) -> Result<()> {
+pub fn install() -> Result<()> {
     let paths = paths()?;
-    let allowed_peer_uids = merge_peer_uids(config()?.allowed_peer_uids, additional_peer_uids)?;
 
     remove_directory_if_exists(&paths.legacy_extension)?;
     for manifest in &paths.legacy_native_host_manifests {
         remove_file_if_exists(manifest)?;
     }
+    remove_file_if_exists(&paths.legacy_config)?;
 
     let executable = env::current_exe()?.canonicalize()?;
     let browser_bridge_executable = browser_bridge_executable(&executable)?;
@@ -74,17 +67,11 @@ pub fn install(additional_peer_uids: &[u32]) -> Result<()> {
         &external_extension_manifest,
     )?;
 
-    if !additional_peer_uids.is_empty() {
-        let config = BrowserConfig { allowed_peer_uids };
-        write_if_changed(paths.config, &serde_json::to_vec_pretty(&config)?)?;
-    }
-
     Ok(())
 }
 
 pub fn status() -> Result<BrowserStatus> {
     let paths = paths()?;
-    let browser_config = config()?;
     let container_native_host_manifest_present = paths.container_native_host_manifest.is_file();
     let container_external_extension_manifest_present =
         paths.container_external_extension_manifest.is_file();
@@ -98,39 +85,7 @@ pub fn status() -> Result<BrowserStatus> {
         container_native_host_manifest_present,
         container_external_extension_manifest: paths.container_external_extension_manifest,
         container_external_extension_manifest_present,
-        allowed_peer_uids: browser_config.allowed_peer_uids,
     })
-}
-
-fn merge_peer_uids(mut configured: Vec<u32>, additional: &[u32]) -> Result<Vec<u32>> {
-    configured.extend_from_slice(additional);
-    configured.sort_unstable();
-    configured.dedup();
-    if configured.is_empty() {
-        return Err(Error::BrowserPeerRequired);
-    }
-
-    Ok(configured)
-}
-
-pub fn reset_peers() -> Result<()> {
-    write_if_changed(
-        paths()?.config,
-        &serde_json::to_vec_pretty(&BrowserConfig::default())?,
-    )
-}
-
-pub fn config() -> Result<BrowserConfig> {
-    let path = config_home()?.join("psst/browser.json");
-    let contents = match fs::read(path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(BrowserConfig::default());
-        }
-        Err(error) => return Err(error.into()),
-    };
-
-    Ok(serde_json::from_slice(&contents)?)
 }
 
 pub fn socket_path() -> Result<PathBuf> {
@@ -310,7 +265,7 @@ fn paths() -> Result<BrowserPaths> {
         container_external_extension_manifest: data_home
             .join("psst/container-external-extension")
             .join(format!("{EXTENSION_ID}.json")),
-        config: config_home.join("psst/browser.json"),
+        legacy_config: config_home.join("psst/browser.json"),
     })
 }
 
@@ -339,27 +294,6 @@ mod tests {
         assert_eq!(
             EXTENSION_ORIGIN,
             format!("chrome-extension://{EXTENSION_ID}/")
-        );
-    }
-
-    #[test]
-    fn browser_config_defaults_to_no_container_peers() {
-        assert!(BrowserConfig::default().allowed_peer_uids.is_empty());
-    }
-
-    #[test]
-    fn browser_install_requires_a_peer_uid() {
-        assert!(matches!(
-            merge_peer_uids(Vec::new(), &[]),
-            Err(Error::BrowserPeerRequired)
-        ));
-    }
-
-    #[test]
-    fn browser_install_adds_peer_uids() {
-        assert_eq!(
-            merge_peer_uids(vec![100999], &[65534, 100999]).unwrap(),
-            [65534, 100999]
         );
     }
 

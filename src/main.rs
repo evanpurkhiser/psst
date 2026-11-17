@@ -102,15 +102,9 @@ enum PasskeyCommand {
 #[derive(Subcommand)]
 enum BrowserCommand {
     /// Install or refresh the signed container browser integration.
-    Install {
-        /// Additional host UID permitted to use the container browser bridge.
-        #[arg(long = "peer-uid", value_name = "UID")]
-        allowed_peer_uids: Vec<u32>,
-    },
-    /// Report generated browser artifacts and peer authorization.
+    Install,
+    /// Report generated browser artifacts.
     Status,
-    /// Clear all container browser peer authorization.
-    Reset,
 }
 
 fn main() {
@@ -240,13 +234,12 @@ fn wait_for_passkey_handoff(session: String, request_id: String) -> Result<()> {
 
 fn run_browser(command: BrowserCommand) -> Result<()> {
     match command {
-        BrowserCommand::Install { allowed_peer_uids } => browser::install(&allowed_peer_uids),
+        BrowserCommand::Install => browser::install(),
         BrowserCommand::Status => {
             serde_json::to_writer_pretty(std::io::stdout().lock(), &browser::status()?)?;
             println!();
             Ok(())
         }
-        BrowserCommand::Reset => browser::reset_peers(),
     }
 }
 

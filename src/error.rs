@@ -66,10 +66,6 @@ pub enum Error {
     BrowserBridgeUnavailable(PathBuf),
     #[error("the Chrome extension package was not found at {0}")]
     BrowserExtensionUnavailable(PathBuf),
-    #[error("no browser peer UID is configured; run `psst browser install --peer-uid <UID>`")]
-    BrowserPeerRequired,
-    #[error("the browser bridge rejected peer UID {0}")]
-    BrowserPeer(u32),
     #[error("$XDG_RUNTIME_DIR is not owned by the current user or has unsafe permissions")]
     UnsafeRuntimeDirectory,
     #[error("the psst socket path is occupied by an unsafe file")]
@@ -128,8 +124,6 @@ impl Error {
             Self::BrowserInstallPath => "browser_install_path_invalid",
             Self::BrowserBridgeUnavailable(_) => "browser_bridge_unavailable",
             Self::BrowserExtensionUnavailable(_) => "browser_extension_unavailable",
-            Self::BrowserPeerRequired => "browser_peer_required",
-            Self::BrowserPeer(_) => "browser_peer_unauthorized",
             Self::UnsafeRuntimeDirectory => "runtime_directory_unsafe",
             Self::UnsafeSocket => "socket_unsafe",
             Self::InputSizeLimit(_) => "input_too_large",
@@ -149,10 +143,7 @@ impl Error {
 
     pub fn exit_status(&self) -> i32 {
         match self.code() {
-            "invalid_link"
-            | "share_from_terminal"
-            | "input_too_large"
-            | "browser_peer_required" => 10,
+            "invalid_link" | "share_from_terminal" | "input_too_large" => 10,
             "share_unavailable" | "network_error" => 11,
             "unsupported_container"
             | "decryption_failed"

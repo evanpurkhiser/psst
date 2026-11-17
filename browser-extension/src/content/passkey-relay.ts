@@ -31,9 +31,6 @@ const failureMessage = (response: BackgroundResponse) => {
   ) {
     return 'The psst browser integration is unavailable. Continue without psst.';
   }
-  if (!response.success && response.code === 'browser_peer_unauthorized') {
-    return `${response.error}. Add it with psst browser install --peer-uid <UID>.`;
-  }
   if (!response.success && response.code === 'passkey_handoff_required') {
     return 'The psst handoff expired. Start a new passkey request or continue without psst.';
   }

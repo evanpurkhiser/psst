@@ -142,11 +142,11 @@ fn browser_bridge() -> Result<(UnixListener, PathBuf)> {
     if !metadata.file_type().is_dir() || metadata.uid() != effective_uid() {
         return Err(Error::UnsafeRuntimeDirectory);
     }
-    fs::set_permissions(directory, fs::Permissions::from_mode(0o711))?;
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
     remove_stale_socket(&socket_path)?;
 
     let listener = UnixListener::bind(&socket_path)?;
-    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))?;
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
 
     Ok((listener, socket_path))
@@ -223,15 +223,7 @@ fn handle_browser_connection(stream: &mut UnixStream, state: &mut State) {
         return;
     }
 
-    let reply = peer_uid(stream)
-        .and_then(|uid| {
-            browser::config()?
-                .allowed_peer_uids
-                .contains(&uid)
-                .then_some(())
-                .ok_or(Error::BrowserPeer(uid))
-        })
-        .and_then(|()| read_browser_request(stream))
+    let reply = read_browser_request(stream)
         .and_then(|request| handle(Request::PasskeyBrowserAssert { request }, state));
     let response = match reply {
         Ok((Response::PasskeyAssertion { assertion }, None)) => serde_json::json!({
@@ -266,32 +258,6 @@ fn read_browser_request(stream: &UnixStream) -> Result<AssertionRequest> {
     }
 
     Ok(serde_json::from_slice(&line)?)
-}
-
-fn peer_uid(stream: &UnixStream) -> Result<u32> {
-    use std::os::fd::AsRawFd;
-
-    let mut credentials = libc::ucred {
-        pid: 0,
-        uid: 0,
-        gid: 0,
-    };
-    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    // getsockopt writes a ucred value into the provided initialized storage.
-    let result = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&raw mut credentials).cast(),
-            &raw mut length,
-        )
-    };
-    if result == -1 {
-        return Err(std::io::Error::last_os_error().into());
-    }
-
-    Ok(credentials.uid)
 }
 
 fn read_request(stream: &UnixStream) -> Result<Request> {
