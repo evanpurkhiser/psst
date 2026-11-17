@@ -5,7 +5,7 @@ use std::{
     os::fd::AsFd,
 };
 
-use crate::daemon::dbus::PsstProxyBlocking;
+use crate::daemon::dbus::{PsstProxy, PsstProxyBlocking};
 use clap::{Parser, Subcommand};
 use zbus::{blocking::Connection, zvariant::Fd};
 use zeroize::Zeroizing;
@@ -130,7 +130,9 @@ fn run(command: Command) -> Result<()> {
             browser_listen,
         } => tokio::runtime::Runtime::new()?.block_on(daemon::run(sharing_listen, browser_listen)),
         Command::Open => open(),
-        Command::Sessions { live: true } => live_sessions(),
+        Command::Sessions { live: true } => {
+            tokio::runtime::Runtime::new()?.block_on(live_sessions())
+        }
         Command::Sessions { live: false } => {
             with_proxy(|proxy| write_json(&proxy.list_sessions().map_err(Error::from)?))
         }
@@ -162,21 +164,32 @@ fn run(command: Command) -> Result<()> {
     }
 }
 
-fn live_sessions() -> Result<()> {
-    with_proxy(|proxy| {
-        let mut output = std::io::stdout().lock();
-        let mut seen = HashSet::new();
-        for session in proxy.list_sessions().map_err(Error::from)? {
-            write_json_line(&mut output, &session)?;
-            seen.insert(session.id);
-        }
-        loop {
-            let known_ids = seen.iter().cloned().collect();
-            let session = proxy.wait_session(known_ids).map_err(Error::from)?;
-            write_json_line(&mut output, &session)?;
-            seen.insert(session.id);
-        }
-    })
+async fn live_sessions() -> Result<()> {
+    let connection = zbus::Connection::system().await?;
+    let proxy = PsstProxy::new(&connection).await?;
+    let mut output = std::io::stdout().lock();
+    let mut seen = HashSet::new();
+
+    for session in proxy.list_sessions().await.map_err(Error::from)? {
+        write_json_line(&mut output, &session)?;
+        seen.insert(session.id);
+    }
+
+    let interrupt = tokio::signal::ctrl_c();
+    tokio::pin!(interrupt);
+
+    loop {
+        let known_ids = seen.iter().cloned().collect();
+        let session = tokio::select! {
+            result = proxy.wait_session(known_ids) => result.map_err(Error::from)?,
+            result = &mut interrupt => {
+                result?;
+                return Ok(());
+            }
+        };
+        write_json_line(&mut output, &session)?;
+        seen.insert(session.id);
+    }
 }
 
 fn write_json_line(mut output: impl Write, value: &impl serde::Serialize) -> Result<()> {
