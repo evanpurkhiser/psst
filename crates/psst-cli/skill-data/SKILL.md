@@ -47,6 +47,17 @@ Never print, inspect, log, summarize,
 or save a returned value unless the task explicitly requires a file.
 `get` and `download` refuse terminal output.
 
+## Fill browser fields
+
+Fill an identified agent-browser control directly from a psst field:
+
+```bash
+agent-browser --session BROWSER_SESSION fill @FIELD "$(psst get SESSION_ID -- SELECTOR)"
+```
+
+Use this for username, password, and one-time password fields.
+Retrieve a fresh one-time password immediately before submitting it.
+
 ## Use a passkey
 
 Confirm that `fields` lists a passkey with the expected `rpId`,
