@@ -29,6 +29,15 @@ export const installPasskeyInterceptor = () => {
   CredentialsContainer.prototype.get = function (options = {}) {
     return interceptor.intercept(this, options);
   };
+  Object.defineProperty(
+    PublicKeyCredential,
+    'isUserVerifyingPlatformAuthenticatorAvailable',
+    {
+      configurable: true,
+      value: () => Promise.resolve(true),
+      writable: true,
+    },
+  );
 
   listenForPageEvent(events.response, ({id, response}) => {
     interceptor.handleResponse(id, response);
