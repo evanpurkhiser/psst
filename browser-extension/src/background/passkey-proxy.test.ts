@@ -130,7 +130,7 @@ describe('passkey proxy', () => {
     expect(proxy.detach).toHaveBeenCalledOnce();
   });
 
-  it('preserves attached state when Chrome fails to detach', async () => {
+  it('reattaches after Chrome fails to detach', async () => {
     const {coordinator, proxy} = setup();
     proxy.detach.mockResolvedValueOnce('detach failed');
     await coordinator.arm(handoff('first'));
@@ -139,7 +139,7 @@ describe('passkey proxy', () => {
     await coordinator.arm(handoff('second'));
     await coordinator.cancel('second');
 
-    expect(proxy.attach).toHaveBeenCalledOnce();
+    expect(proxy.attach).toHaveBeenCalledTimes(2);
     expect(proxy.detach).toHaveBeenCalledTimes(2);
   });
 });
