@@ -69,36 +69,26 @@ export const createPasskeyProxy = ({
   const arming = new Map<string, HandoffRequest>();
   const armed = new Map<string, HandoffRequest>();
   const active = new Map<number, HandoffRequest>();
-  let attachPromise: Promise<void> | undefined;
   let detachPromise: Promise<void> | undefined;
-  let attached = false;
 
   const maybeDetach = async () => {
-    if (
-      attachPromise ||
-      detachPromise ||
-      !attached ||
-      arming.size ||
-      armed.size ||
-      active.size
-    ) {
+    if (arming.size || armed.size || active.size) {
       return;
     }
 
-    detachPromise = proxy
-      .detach()
-      .then(error => {
-        if (error) {
-          throw new Error(error);
-        }
-        attached = false;
-      })
-      .catch(() => {
-        attached = true;
-      })
-      .finally(() => {
-        detachPromise = undefined;
-      });
+    if (!detachPromise) {
+      detachPromise = proxy
+        .detach()
+        .then(error => {
+          if (error) {
+            throw new Error(error);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          detachPromise = undefined;
+        });
+    }
     await detachPromise;
   };
 
@@ -106,24 +96,11 @@ export const createPasskeyProxy = ({
     if (detachPromise) {
       await detachPromise;
     }
-    if (attached) {
-      return;
+
+    const error = await proxy.attach();
+    if (error) {
+      throw new Error(error);
     }
-    if (!attachPromise) {
-      attachPromise = proxy
-        .attach()
-        .then(error => {
-          if (error) {
-            throw new Error(error);
-          }
-          attached = true;
-        })
-        .finally(() => {
-          attachPromise = undefined;
-          void maybeDetach();
-        });
-    }
-    await attachPromise;
   };
 
   const fail = async (requestId: number, message: string) => {
