@@ -30,25 +30,14 @@ directory.
 Builds without configured paths resolve `psst-browser-bridge`
 and `psst-chrome-extension.crx` next to the CLI.
 
-Install the browser files and configure the UID that the host observes
-for the container's browser process:
+Install the browser files:
 
 ```console
-psst browser install --peer-uid 65534
+psst browser install
 ```
 
-Rootless user namespaces commonly appear as UID 65534 to the host process
-that owns the socket.
-Use the UID reported by `browser_peer_unauthorized`
-when the runtime uses a different mapping.
-Each `--peer-uid` adds to the existing allowlist;
-repeat it to add several mappings in one command.
-
-`psst browser status` reports whether each generated artifact is present
-and the current peer allowlist.
+`psst browser status` reports whether each generated artifact is present.
 It does not probe Chrome, the daemon, or bridge connectivity.
-`psst browser reset` clears the peer allowlist without removing the installed
-extension or native-host files.
 
 Mount these host paths into the browser container:
 
@@ -59,12 +48,10 @@ Mount these host paths into the browser container:
 | `~/.local/share/psst/container-external-extension` | `/opt/google/chrome/extensions`          | read-only |
 | `$XDG_RUNTIME_DIR/psst-browser`                    | `/run/psst`                              | read-only |
 
-Create `$XDG_RUNTIME_DIR/psst-browser` with mode 0711
+Create `$XDG_RUNTIME_DIR/psst-browser` with mode 0700
 before starting the container.
 The daemon creates `bridge.sock` there when a psst command starts it.
-The socket is reachable through the explicit mount,
-while the mode-0700 parent runtime directory keeps it unavailable to other host
-users.
+The container browser user must have read and write access to the socket.
 
 Branded Chrome reads the external-extension descriptor at startup
 and installs the signed CRX from `/opt/psst/chrome-extension.crx` into its
