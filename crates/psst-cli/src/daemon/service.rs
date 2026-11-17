@@ -62,6 +62,7 @@ pub struct SessionSummary {
     pub domains: Vec<String>,
     pub capabilities: Vec<String>,
     pub expires_at: u64,
+    pub expires_in_seconds: u64,
 }
 
 impl Service {
@@ -100,7 +101,7 @@ impl Service {
         let mut sessions = state
             .sessions
             .values()
-            .map(|session| session.summary.clone())
+            .map(|session| session.summary())
             .collect::<Vec<_>>();
         sessions.sort_by(|left, right| {
             left.expires_at
@@ -297,6 +298,15 @@ impl Session {
     fn decrypt_overview(&self) -> Result<Zeroizing<Vec<u8>>> {
         crypto::decrypt(&self.overview, &self.key)
     }
+
+    fn summary(&self) -> SessionSummary {
+        let mut summary = self.summary.clone();
+        summary.expires_in_seconds = self
+            .expires_at
+            .saturating_duration_since(Instant::now())
+            .as_secs();
+        summary
+    }
 }
 
 fn session_summary(id: String, overview: &[u8], details: &[u8]) -> Result<SessionSummary> {
@@ -341,6 +351,7 @@ fn session_summary(id: String, overview: &[u8], details: &[u8]) -> Result<Sessio
         domains: domains.into_iter().collect(),
         capabilities: capabilities.into_iter().collect(),
         expires_at,
+        expires_in_seconds: SESSION_TTL.as_secs(),
     })
 }
 
@@ -425,6 +436,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reports_remaining_session_lifetime() {
+        let summary = stub_session("session".into()).summary();
+        let json = serde_json::to_value(summary).unwrap();
+        let remaining = json["expiresInSeconds"].as_u64().unwrap();
+
+        assert!(remaining > 0);
+        assert!(remaining <= SESSION_TTL.as_secs());
+    }
+
     fn stub_session(id: String) -> Session {
         let container = EncryptedContainer {
             kid: String::new(),
@@ -445,6 +466,7 @@ mod tests {
                 domains: Vec::new(),
                 capabilities: Vec::new(),
                 expires_at: 0,
+                expires_in_seconds: 0,
             },
             expires_at: Instant::now() + SESSION_TTL,
         }
