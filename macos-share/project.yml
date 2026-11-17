@@ -1,0 +1,41 @@
+name: PsstShare
+options:
+  deploymentTarget:
+    macOS: '13.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: '1.0'
+    CODE_SIGN_IDENTITY: '-'
+    GENERATE_INFOPLIST_FILE: YES
+targets:
+  PsstShare:
+    type: application
+    platform: macOS
+    sources: [App]
+    dependencies:
+      - target: ShareExtension
+        embed: true
+    settings:
+      base:
+        PRODUCT_NAME: Psst Share
+        PRODUCT_BUNDLE_IDENTIFIER: com.evanpurkhiser.psst.share-client
+  ShareExtension:
+    type: app-extension
+    platform: macOS
+    sources:
+      - Extension/EndpointConfiguration.swift
+      - Extension/ShareViewController.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.evanpurkhiser.psst.share-client.extension
+        INFOPLIST_FILE: Extension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Extension/ShareExtension.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+schemes:
+  PsstShare:
+    build:
+      targets:
+        PsstShare: all
