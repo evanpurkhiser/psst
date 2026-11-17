@@ -1,37 +1,11 @@
 import * as z from 'zod/mini';
 
 import {createPasskeyProxy} from './background/passkey-proxy';
-import {
-  NATIVE_HOST,
-  assertionResponseSchema,
-  backgroundMessageSchema,
-  type AssertionRequest,
-  type AssertionResponse,
-} from './protocol';
+import {requestAssertion} from './background/psst-client';
+import {backgroundMessageSchema} from './protocol';
 
 const requestIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-
-const requestAssertion = (request: AssertionRequest): Promise<AssertionResponse> =>
-  new Promise(resolve => {
-    chrome.runtime.sendNativeMessage(NATIVE_HOST, request, response => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        resolve({
-          success: false,
-          error: error.message ?? 'The psst browser bridge is unavailable',
-        });
-        return;
-      }
-
-      const parsed = z.safeParse(assertionResponseSchema, response);
-      resolve(
-        parsed.success
-          ? parsed.data
-          : {success: false, error: 'The psst browser bridge is unavailable'},
-      );
-    });
-  });
 
 const proxy = createPasskeyProxy({
   proxy: chrome.webAuthenticationProxy,

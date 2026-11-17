@@ -1,6 +1,6 @@
 import * as z from 'zod/mini';
 
-export const NATIVE_HOST = 'com.evanpurkhiser.psst';
+import {AssertionSchema, type Assertion} from './browser-protocol';
 
 export const events = {
   request: 'psst-passkey-request',
@@ -45,16 +45,13 @@ export const backgroundResponseSchema = z.union([
 ]);
 export type BackgroundResponse = z.infer<typeof backgroundResponseSchema>;
 
-export interface AssertionRequest extends PasskeyRequest {
-  requestId: string;
-  origin: string;
-}
-
 export const assertionResponseSchema = z.union([
-  z.object({success: z.literal(true), assertion: z.record(z.string(), z.unknown())}),
+  z.object({success: z.literal(true), assertion: AssertionSchema}),
   failureSchema,
 ]);
-export type AssertionResponse = z.infer<typeof assertionResponseSchema>;
+export type AssertionResponse =
+  | {success: true; assertion: Assertion}
+  | {success: false; code?: string; error: string};
 
 export const relayResponseSchema = z.union([
   assertionResponseSchema,

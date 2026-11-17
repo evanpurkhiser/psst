@@ -1,11 +1,7 @@
 import * as z from 'zod/mini';
 
-import type {
-  AssertionRequest,
-  AssertionResponse,
-  BackgroundResponse,
-  PasskeyRequest,
-} from '../protocol';
+import type {AssertionRequest} from '../browser-protocol';
+import type {AssertionResponse, BackgroundResponse, PasskeyRequest} from '../protocol';
 
 interface HandoffRequest {
   handoffId: string;
@@ -30,7 +26,10 @@ interface WebAuthenticationProxy {
 
 interface PasskeyProxyDependencies {
   proxy: WebAuthenticationProxy;
-  requestAssertion(request: AssertionRequest): Promise<AssertionResponse>;
+  requestAssertion(
+    request: AssertionRequest,
+    signal: AbortSignal,
+  ): Promise<AssertionResponse>;
 }
 
 interface PasskeyProxy {
@@ -45,9 +44,14 @@ const parseRequest = (value: string): ChromePasskeyRequest | undefined => {
     const parsed = z.safeParse(chromePasskeyRequestSchema, JSON.parse(value));
     return parsed.success ? parsed.data : undefined;
   } catch {
-    return;
+    return undefined;
   }
 };
+
+interface ActiveRequest {
+  handoff: HandoffRequest;
+  abort: AbortController;
+}
 
 const sameRequest = (expected: PasskeyRequest, actual: ChromePasskeyRequest) => {
   const actualCredentials = (actual.allowCredentials ?? []).map(item => item.id);
@@ -68,7 +72,7 @@ export const createPasskeyProxy = ({
 }: PasskeyProxyDependencies): PasskeyProxy => {
   const arming = new Map<string, HandoffRequest>();
   const armed = new Map<string, HandoffRequest>();
-  const active = new Map<number, HandoffRequest>();
+  const active = new Map<number, ActiveRequest>();
   let detachPromise: Promise<void> | undefined;
 
   const maybeDetach = async () => {
@@ -120,7 +124,7 @@ export const createPasskeyProxy = ({
       arming.has(request.handoffId) ||
       armed.has(request.handoffId) ||
       [...active.values()].some(
-        activeRequest => activeRequest.handoffId === request.handoffId,
+        activeRequest => activeRequest.handoff.handoffId === request.handoffId,
       );
     if (duplicate) {
       return {success: false, error: 'This psst passkey handoff is already active'};
@@ -153,6 +157,12 @@ export const createPasskeyProxy = ({
   const cancel = async (handoffId: string) => {
     arming.delete(handoffId);
     armed.delete(handoffId);
+    for (const [requestId, request] of active) {
+      if (request.handoff.handoffId === handoffId) {
+        request.abort.abort();
+        active.delete(requestId);
+      }
+    }
     await maybeDetach();
   };
 
@@ -181,19 +191,25 @@ export const createPasskeyProxy = ({
 
     const [matched] = matches;
     armed.delete(matched.handoffId);
-    active.set(requestInfo.requestId, matched);
+    const abort = new AbortController();
+    active.set(requestInfo.requestId, {handoff: matched, abort});
 
     let response: AssertionResponse;
     try {
-      response = await requestAssertion({
-        requestId: matched.handoffId,
-        origin: matched.origin,
-        challenge: request.challenge,
-        rpId: request.rpId ?? matched.request.rpId,
-        allowCredentials: (request.allowCredentials ?? []).map(item => item.id),
-      });
+      response = await requestAssertion(
+        {
+          requestId: matched.handoffId,
+          origin: matched.origin,
+          challenge: request.challenge,
+          rpId: request.rpId ?? matched.request.rpId,
+          allowCredentials: (request.allowCredentials ?? []).map(item => item.id),
+        },
+        abort.signal,
+      );
     } catch {
-      await fail(requestInfo.requestId, 'The psst browser bridge is unavailable');
+      if (active.has(requestInfo.requestId)) {
+        await fail(requestInfo.requestId, 'The psst browser service is unavailable');
+      }
       return;
     }
     if (!active.has(requestInfo.requestId)) {
@@ -202,7 +218,7 @@ export const createPasskeyProxy = ({
     if (!response.success) {
       await fail(
         requestInfo.requestId,
-        response.error ?? 'The psst browser bridge is unavailable',
+        response.error ?? 'The psst browser service is unavailable',
       );
       return;
     }
@@ -219,7 +235,10 @@ export const createPasskeyProxy = ({
   };
 
   const handleRequestCanceled = (requestId: number) => {
-    if (active.delete(requestId)) {
+    const request = active.get(requestId);
+    if (request) {
+      request.abort.abort();
+      active.delete(requestId);
       void maybeDetach();
     }
   };

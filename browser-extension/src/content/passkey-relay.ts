@@ -22,21 +22,8 @@ interface ActiveRequest {
   prompt?: PasskeyPrompt;
 }
 
-const failureMessage = (response: BackgroundResponse) => {
-  if (
-    !response.success &&
-    ['native_host_unavailable', 'browser_bridge_unavailable'].includes(
-      response.code ?? '',
-    )
-  ) {
-    return 'The psst browser integration is unavailable. Continue without psst.';
-  }
-  if (!response.success && response.code === 'passkey_handoff_required') {
-    return 'The psst handoff expired. Start a new passkey request or continue without psst.';
-  }
-
-  return response.success ? '' : response.error;
-};
+const failureMessage = (response: BackgroundResponse) =>
+  response.success ? '' : response.error;
 
 /**
  * Connects page-world WebAuthn requests to Chrome extension messaging and UI.
@@ -68,7 +55,7 @@ export const installPasskeyRelay = () => {
         };
         await chrome.runtime.sendMessage(message);
       } catch {
-        // The native browser flow can still proceed if the worker was unloaded.
+        // The browser flow can still proceed if the worker was unloaded.
       }
     }
 

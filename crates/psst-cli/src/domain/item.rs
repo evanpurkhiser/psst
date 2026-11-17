@@ -8,40 +8,38 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use totp_rs::{Totp, TotpError as ProtocolError};
 use url::Url;
+use zbus::zvariant::Type;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    attachment::Attachment,
+    domain::{attachment::Attachment, webauthn::CredentialSummary},
     error::{Error, Result, TotpError},
-    webauthn::CredentialSummary,
 };
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum ItemSummary {
     Field(FieldSummary),
     Passkey(PasskeySummary),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Type)]
 pub struct FieldSummary {
     pub selector: String,
     pub label: String,
     #[serde(rename = "type")]
     pub kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PasskeySummary {
     #[serde(rename = "type")]
-    kind: String,
-    credential_id: String,
-    rp_id: String,
+    pub kind: String,
+    pub credential_id: String,
+    pub rp_id: String,
 }
 
 impl From<CredentialSummary> for PasskeySummary {
@@ -145,13 +143,6 @@ pub fn list_fields(json: &[u8]) -> Result<Vec<FieldSummary>> {
             }
         })
         .collect())
-}
-
-pub fn list_items(json: &[u8], passkey: Option<CredentialSummary>) -> Result<Vec<ItemSummary>> {
-    let fields = list_fields(json)?.into_iter().map(ItemSummary::Field);
-    let passkey = passkey.map(PasskeySummary::from).map(ItemSummary::Passkey);
-
-    Ok(fields.chain(passkey).collect())
 }
 
 pub fn get_field(json: &[u8], selector: &str) -> Result<SecretValue> {
@@ -447,31 +438,25 @@ mod tests {
             serde_json::json!({
                 "selector": "username",
                 "label": "username",
-                "type": "string"
+                "type": "string",
+                "filename": null,
+                "size": null
             })
         );
     }
 
     #[test]
-    fn lists_passkeys_after_normal_fields() {
-        let fields = list_items(
-            DETAILS,
-            Some(CredentialSummary {
-                credential_id: "Y3JlZGVudGlhbA".into(),
-                rp_id: "example.com".into(),
-            }),
-        )
-        .expect("valid item details");
+    fn field_summaries_have_a_stable_dbus_shape() {
+        use zbus::zvariant::{Endian, serialized::Context, to_bytes};
 
-        assert_eq!(fields.len(), 4);
-        assert_eq!(
-            serde_json::to_value(&fields[3]).expect("serializable summary"),
-            serde_json::json!({
-                "type": "passkey",
-                "credentialId": "Y3JlZGVudGlhbA",
-                "rpId": "example.com"
-            })
-        );
+        let field = list_fields(DETAILS).unwrap().remove(0);
+        let context = Context::new_dbus(Endian::Little, 0);
+        let encoded = to_bytes(context, &field).expect("D-Bus serialization");
+        let decoded: FieldSummary = encoded.deserialize().expect("D-Bus shape").0;
+
+        assert_eq!(decoded.selector, field.selector);
+        assert_eq!(decoded.filename, None);
+        assert_eq!(decoded.size, None);
     }
 
     #[test]
