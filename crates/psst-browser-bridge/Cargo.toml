@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 libc = "0.2"
-psst = { package = "psst-cli", path = "../..", default-features = false }
+psst = { package = "psst-cli", path = "../psst-cli", default-features = false }
 serde_json = "1.0"
 zeroize = "1.8"
 

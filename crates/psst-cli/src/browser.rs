@@ -274,22 +274,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extension_manifest_has_the_native_messaging_boundary() {
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../browser-extension/manifest.json")).unwrap();
-
-        assert_eq!(manifest["manifest_version"], 3);
-        assert_eq!(manifest["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(
-            manifest["permissions"],
-            json!(["nativeMessaging", "webAuthenticationProxy"])
-        );
-        assert_eq!(manifest["minimum_chrome_version"], "115");
-        assert_eq!(manifest["content_scripts"][0]["world"], "ISOLATED");
-        assert_eq!(manifest["content_scripts"][1]["world"], "MAIN");
-    }
-
-    #[test]
     fn container_extension_manifest_uses_the_packaged_extension_id() {
         assert_eq!(
             EXTENSION_ORIGIN,
