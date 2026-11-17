@@ -1,2 +1,3 @@
 /target
+browser-extension/src/browser-protocol.ts
 node_modules/

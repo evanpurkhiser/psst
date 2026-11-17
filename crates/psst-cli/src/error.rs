@@ -40,36 +40,30 @@ pub enum Error {
     PasskeyKey,
     #[error("invalid WebAuthn request: {0}")]
     WebAuthnRequest(String),
-    #[error("the browser passkey request has not been handed off to psst")]
-    PasskeyHandoffRequired,
-    #[error("the browser passkey request already has a different handoff")]
-    PasskeyHandoffBusy,
+    #[error("the browser passkey request is already active")]
+    BrowserRequestBusy,
     #[error("the browser did not complete the passkey handoff before it expired")]
     PasskeyHandoffExpired,
+    #[error("the browser passkey capability is invalid")]
+    BrowserCapability,
+    #[error("too many browser passkey requests are active")]
+    BrowserRequestLimit,
     #[error("refusing to write a secret to a terminal; pipe or redirect stdout")]
     SecretToTerminal,
     #[error("refusing to read a share link from a terminal; pipe or redirect stdin")]
     ShareFromTerminal,
     #[error("session {0:?} was not found or has expired")]
     SessionNotFound(String),
-    #[error(
-        "the psst daemon did not become available; inspect `systemctl --user status psst-daemon`"
-    )]
-    DaemonUnavailable,
-    #[error("$XDG_RUNTIME_DIR is not set")]
-    RuntimeDirectory,
+    #[error("the system clock is before the Unix epoch")]
+    Clock,
     #[error("$HOME is not set")]
     HomeDirectory,
     #[error("the browser integration path is invalid")]
     BrowserInstallPath,
-    #[error("the browser bridge executable was not found at {0}")]
-    BrowserBridgeUnavailable(PathBuf),
     #[error("the Chrome extension package was not found at {0}")]
     BrowserExtensionUnavailable(PathBuf),
-    #[error("$XDG_RUNTIME_DIR is not owned by the current user or has unsafe permissions")]
-    UnsafeRuntimeDirectory,
-    #[error("the psst socket path is occupied by an unsafe file")]
-    UnsafeSocket,
+    #[error("the browser protocol schema could not be generated: {0}")]
+    BrowserSchema(String),
     #[error("{0} exceeded its maximum supported size")]
     InputSizeLimit(&'static str),
     #[error("{0} exceeded its maximum supported size")]
@@ -93,7 +87,7 @@ pub enum Error {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
-    Systemd(#[from] systemd_zbus::zbus::Error),
+    Dbus(#[from] zbus::Error),
 }
 
 impl Error {
@@ -112,20 +106,18 @@ impl Error {
             Self::UnsupportedPasskey => "passkey_unsupported",
             Self::PasskeyKey => "passkey_key_invalid",
             Self::WebAuthnRequest(_) => "webauthn_request_invalid",
-            Self::PasskeyHandoffRequired => "passkey_handoff_required",
-            Self::PasskeyHandoffBusy => "passkey_handoff_busy",
+            Self::BrowserRequestBusy => "browser_request_busy",
             Self::PasskeyHandoffExpired => "passkey_handoff_expired",
+            Self::BrowserCapability => "browser_capability_invalid",
+            Self::BrowserRequestLimit => "browser_request_limit",
             Self::SecretToTerminal => "secret_to_terminal",
             Self::ShareFromTerminal => "share_from_terminal",
             Self::SessionNotFound(_) => "session_not_found",
-            Self::DaemonUnavailable => "daemon_unavailable",
-            Self::RuntimeDirectory => "runtime_directory_missing",
+            Self::Clock => "clock_invalid",
             Self::HomeDirectory => "home_directory_missing",
             Self::BrowserInstallPath => "browser_install_path_invalid",
-            Self::BrowserBridgeUnavailable(_) => "browser_bridge_unavailable",
             Self::BrowserExtensionUnavailable(_) => "browser_extension_unavailable",
-            Self::UnsafeRuntimeDirectory => "runtime_directory_unsafe",
-            Self::UnsafeSocket => "socket_unsafe",
+            Self::BrowserSchema(_) => "browser_schema_failed",
             Self::InputSizeLimit(_) => "input_too_large",
             Self::ResponseSizeLimit(_) => "response_too_large",
             Self::AttachmentUnavailable => "attachment_unavailable",
@@ -137,7 +129,7 @@ impl Error {
             Self::Http(_) => "network_error",
             Self::Io(_) => "io_error",
             Self::Json(_) => "invalid_json",
-            Self::Systemd(_) => "systemd_error",
+            Self::Dbus(_) => "dbus_error",
         }
     }
 
@@ -161,9 +153,8 @@ impl Error {
             | "field_not_file"
             | "invalid_totp"
             | "passkey_unavailable"
-            | "passkey_handoff_busy"
+            | "browser_request_busy"
             | "passkey_handoff_expired"
-            | "passkey_handoff_required"
             | "webauthn_request_invalid" => 20,
             "secret_to_terminal" => 21,
             "session_not_found" => 22,

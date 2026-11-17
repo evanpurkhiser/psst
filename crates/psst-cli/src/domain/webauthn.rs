@@ -3,25 +3,28 @@ use base64::{
     engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
 };
 use p256::ecdsa::{Signature, SigningKey, signature::Signer};
-pub use psst::AssertionRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use specta::Type;
 use url::Url;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::error::{Error, Result};
+use crate::{
+    daemon::browser_protocol::AssertionRequest,
+    error::{Error, Result},
+};
 
 const ASSERTION_FLAGS: u8 = 0x01 | 0x04 | 0x08 | 0x10;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialSummary {
     pub credential_id: String,
     pub rp_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Assertion {
     pub id: String,
@@ -30,10 +33,13 @@ pub struct Assertion {
     pub kind: String,
     pub authenticator_attachment: String,
     pub response: AssertionResponse,
-    pub client_extension_results: serde_json::Value,
+    pub client_extension_results: ClientExtensionResults,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Type)]
+pub struct ClientExtensionResults {}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AssertionResponse {
     #[serde(rename = "clientDataJSON")]
@@ -163,6 +169,7 @@ impl Passkey {
         }
     }
 
+    #[cfg(test)]
     pub fn validate(&self) -> Result<()> {
         decode_signing_key(&self.private_key).map(drop)
     }
@@ -202,7 +209,7 @@ impl Passkey {
                 signature: URL_SAFE_NO_PAD.encode(&signature),
                 user_handle: self.user_handle.clone(),
             },
-            client_extension_results: json!({}),
+            client_extension_results: ClientExtensionResults::default(),
         })
     }
 }
@@ -349,7 +356,7 @@ mod tests {
 
     fn request() -> AssertionRequest {
         AssertionRequest {
-            request_id: None,
+            request_id: "410e26bd-7701-4481-8b7e-9f4215edbd8d".into(),
             origin: "https://login.example.com".into(),
             challenge: "Y2hhbGxlbmdl".into(),
             rp_id: Some("example.com".into()),

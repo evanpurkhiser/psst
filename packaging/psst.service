@@ -1,0 +1,41 @@
+[Unit]
+Description=Short-lived 1Password sharing sessions
+Documentation=https://github.com/evanpurkhiser/psst
+
+[Service]
+Type=dbus
+BusName=com.evanpurkhiser.Psst1
+ExecStart=/usr/bin/psst daemon
+User=_psst
+Group=_psst
+Restart=on-failure
+RestartSec=2s
+
+AmbientCapabilities=
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+MemorySwapMax=0
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProcSubset=pid
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

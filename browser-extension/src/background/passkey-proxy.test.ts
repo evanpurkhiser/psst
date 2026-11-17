@@ -30,7 +30,19 @@ type DeferredResponse = ReturnType<typeof deferred<SuccessfulResponse>>;
 
 const successfulResponse = (id: string): SuccessfulResponse => ({
   success: true,
-  assertion: {id},
+  assertion: {
+    id,
+    rawId: id,
+    type: 'public-key',
+    authenticatorAttachment: 'platform',
+    response: {
+      clientDataJSON: 'client-data',
+      authenticatorData: 'authenticator-data',
+      signature: 'signature',
+      userHandle: 'user',
+    },
+    clientExtensionResults: {},
+  },
 });
 
 const setup = () => {
@@ -41,14 +53,16 @@ const setup = () => {
     completeGetRequest: vi.fn(() => Promise.resolve()),
   };
   const responses = new Map<string, DeferredResponse>();
-  const requestAssertion = vi.fn(request => {
+  const signals = new Map<string, AbortSignal>();
+  const requestAssertion = vi.fn((request, signal: AbortSignal) => {
     const response = deferred<SuccessfulResponse>();
     responses.set(request.requestId, response);
+    signals.set(request.requestId, signal);
     return response.promise;
   });
   const coordinator = createPasskeyProxy({proxy, requestAssertion});
 
-  return {coordinator, proxy, requestAssertion, responses};
+  return {coordinator, proxy, requestAssertion, responses, signals};
 };
 
 describe('passkey proxy', () => {
@@ -87,6 +101,25 @@ describe('passkey proxy', () => {
     expect(proxy.detach).toHaveBeenCalledOnce();
   });
 
+  it('aborts an active daemon request when its handoff is canceled', async () => {
+    const {coordinator, proxy, requestAssertion} = setup();
+    let activeSignal: AbortSignal | undefined;
+    requestAssertion.mockImplementationOnce((_request, signal: AbortSignal) => {
+      activeSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason));
+      });
+    });
+    await coordinator.arm(handoff('first'));
+    const activeRequest = coordinator.handleGetRequest(browserRequest(1, 'first'));
+
+    await coordinator.cancel('first');
+    await activeRequest;
+
+    expect(activeSignal?.aborted).toBe(true);
+    expect(proxy.completeGetRequest).not.toHaveBeenCalled();
+  });
+
   it('fails closed when multiple handoffs match one browser request', async () => {
     const {coordinator, proxy, requestAssertion} = setup();
     await Promise.all([
@@ -113,9 +146,9 @@ describe('passkey proxy', () => {
     });
   });
 
-  it('cleans up when the browser bridge rejects a request', async () => {
+  it('cleans up when the daemon rejects a request', async () => {
     const {coordinator, proxy, requestAssertion} = setup();
-    requestAssertion.mockRejectedValueOnce(new Error('bridge failed'));
+    requestAssertion.mockRejectedValueOnce(new Error('request failed'));
     await coordinator.arm(handoff('first'));
 
     await coordinator.handleGetRequest(browserRequest(1, 'first'));
@@ -124,7 +157,7 @@ describe('passkey proxy', () => {
       requestId: 1,
       error: {
         name: 'NotAllowedError',
-        message: 'The psst browser bridge is unavailable',
+        message: 'The psst browser service is unavailable',
       },
     });
     expect(proxy.detach).toHaveBeenCalledOnce();

@@ -48,9 +48,10 @@ The downloaded bytes contain the ciphertext followed by the 16-byte GCM tag.
 Before decryption, `psst` verifies their size
 and SHA-256 hash against the file field.
 It then authenticates and decrypts the bytes and verifies the plaintext size.
-The daemon sends a JSON response header followed by the exact binary payload
-over its Unix socket, avoiding base64 expansion and preserving arbitrary file
-contents.
+The CLI passes its redirected standard output to the daemon
+as a D-Bus Unix file descriptor.
+The daemon writes the exact binary payload directly to that descriptor,
+avoiding base64 expansion and preserving arbitrary file contents.
 
 ## Passkey assertions
 
@@ -74,19 +75,19 @@ and P-256 signing object.
 The daemon protocol has no response variant for private-key material
 and offers no arbitrary-byte signing operation.
 
-## Browser bridge
+## Browser requests
 
 The Chrome extension arms Chrome's Web Authentication proxy
 when a page requests a passkey.
 Chrome serializes the live challenge, relying-party ID,
 and credential allow list for the extension.
 The extension combines them with the top-level page origin
-and forwards the assertion request through Chrome native messaging.
+and registers the assertion request through the browser HTTP interface.
 **Continue without psst** cancels the psst wait
 and passes the original call to Chrome.
 The extension shows a labeled request identifier,
 and `passkey handoff` authorizes only that identifier for one minute.
-The CLI waits for the matching assertion and reports its failure or completion.
+The CLI reports assertion generation or validation failures.
 Equivalent concurrent calls from one page share a prompt and assertion.
 Separate pages can complete distinct handoffs concurrently,
 including pages in the same Chrome instance.
@@ -99,10 +100,10 @@ after the final request completes or is canceled.
 Chrome converts the returned assertion JSON into the native
 `PublicKeyCredential` received by the page.
 
-Container browsers use a second Unix socket
-that accepts assertion requests only.
-The daemon verifies the connecting process UID against the configured peer list
-before reading a request.
-The main mode-0600 session socket remains outside the container.
-A small native-messaging proxy converts Chrome's framed standard-I/O messages to
-newline-delimited messages on the restricted socket.
+The browser listener accepts assertion operations only.
+Registration returns an unguessable polling capability
+that the extension keeps private.
+Result reads use 25-second HTTP long polls and pending requests expire
+after one minute.
+General session operations remain available only through the system D-Bus
+interface.

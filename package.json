@@ -6,11 +6,12 @@
   "author": "Evan Purkhiser",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-browser-extension.mjs",
-    "build-release": "node scripts/build-browser-extension.mjs --release",
+    "build": "pnpm generate && node scripts/build-browser-extension.mjs",
+    "build-release": "pnpm generate && node scripts/build-browser-extension.mjs --release",
     "format": "oxfmt .",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "generate": "node scripts/generate-browser-protocol.mjs",
+    "test": "pnpm generate && vitest run",
+    "typecheck": "pnpm generate && tsc --noEmit"
   },
   "dependencies": {
     "vanjs-core": "^1.6.2",

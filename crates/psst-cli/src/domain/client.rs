@@ -1,17 +1,16 @@
-use std::{io::Read, time::Duration};
+use std::time::Duration;
 
-use reqwest::{
-    StatusCode,
-    blocking::{Client, Response},
-};
+use reqwest::{Client, Response, StatusCode};
 use serde::Deserialize;
 use url::Url;
 use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
 use crate::{
-    attachment::Attachment,
-    crypto::{EncryptedContainer, ShareKeys},
+    domain::{
+        attachment::Attachment,
+        crypto::{EncryptedContainer, ShareKeys},
+    },
     error::{Error, Result},
 };
 
@@ -31,7 +30,7 @@ struct ShareResponse {
     file_download: Option<FileDownload>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileDownload {
     pub token: String,
@@ -60,7 +59,7 @@ pub struct EncryptedItem {
     pub file_download: Option<FileDownload>,
 }
 
-pub fn fetch(keys: &ShareKeys) -> Result<EncryptedItem> {
+pub async fn fetch(keys: &ShareKeys) -> Result<EncryptedItem> {
     let response = Client::builder()
         .user_agent(concat!("psst/", env!("CARGO_PKG_VERSION")))
         .timeout(HTTP_TIMEOUT)
@@ -68,10 +67,11 @@ pub fn fetch(keys: &ShareKeys) -> Result<EncryptedItem> {
         .get(format!("{SHARE_ORIGIN}/api/v1/share/{}", keys.uuid))
         .header("OP-Share-Token", keys.token.as_str())
         .header("OP-Language", "en")
-        .send()?;
+        .send()
+        .await?;
 
     let status = response.status();
-    let body = read_body(response)?;
+    let body = read_body(response).await?;
 
     if status == StatusCode::OK {
         let response: ShareResponse = serde_json::from_slice(&body)?;
@@ -89,7 +89,7 @@ pub fn fetch(keys: &ShareKeys) -> Result<EncryptedItem> {
     Err(Error::Unavailable(reason.replace('_', " ")))
 }
 
-pub fn fetch_attachment(
+pub async fn fetch_attachment(
     share_uuid: &str,
     download: &FileDownload,
     attachment: &Attachment,
@@ -109,9 +109,10 @@ pub fn fetch_attachment(
             attachment.document_id
         ))
         .header("OP-File-Download-Token", download.token.as_str())
-        .send()?;
+        .send()
+        .await?;
     let status = response.status();
-    let body = read_limited(response, MAX_DOWNLOAD_URL_BODY, "attachment URL response")?;
+    let body = read_limited(response, MAX_DOWNLOAD_URL_BODY, "attachment URL response").await?;
     if status != StatusCode::OK {
         return Err(Error::Unavailable(status.to_string()));
     }
@@ -119,11 +120,11 @@ pub fn fetch_attachment(
     let url = validate_download_url(&response.download_url)?;
     response.download_url.zeroize();
 
-    let response = client.get(url).send()?;
+    let response = client.get(url).send().await?;
     if response.status() != StatusCode::OK {
         return Err(Error::Unavailable(response.status().to_string()));
     }
-    let body = read_limited(response, MAX_ATTACHMENT_BODY, "attachment")?;
+    let body = read_limited(response, MAX_ATTACHMENT_BODY, "attachment").await?;
     if body.len() as u64 != attachment.encrypted_size {
         return Err(Error::AttachmentSize);
     }
@@ -153,12 +154,12 @@ fn validate_download_url(value: &str) -> Result<Url> {
     Ok(url)
 }
 
-fn read_body(response: Response) -> Result<Zeroizing<Vec<u8>>> {
-    read_limited(response, MAX_HTTP_BODY, "1Password response")
+async fn read_body(response: Response) -> Result<Zeroizing<Vec<u8>>> {
+    read_limited(response, MAX_HTTP_BODY, "1Password response").await
 }
 
-fn read_limited(
-    response: Response,
+async fn read_limited(
+    mut response: Response,
     limit: usize,
     description: &'static str,
 ) -> Result<Zeroizing<Vec<u8>>> {
@@ -170,9 +171,11 @@ fn read_limited(
     }
 
     let mut body = Zeroizing::new(Vec::new());
-    response.take(limit as u64 + 1).read_to_end(&mut body)?;
-    if body.len() > limit {
-        return Err(Error::ResponseSizeLimit(description));
+    while let Some(chunk) = response.chunk().await? {
+        if body.len().saturating_add(chunk.len()) > limit {
+            return Err(Error::ResponseSizeLimit(description));
+        }
+        body.extend_from_slice(&chunk);
     }
 
     Ok(body)
