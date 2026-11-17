@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::daemon::dbus::PsstProxyBlocking;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, error::ErrorKind};
 use zbus::{blocking::Connection, zvariant::Fd};
 use zeroize::Zeroizing;
 
@@ -22,7 +22,7 @@ const DEFAULT_SHARING_ADDRESS: &str = "127.0.0.1:7337";
 const DEFAULT_BROWSER_ADDRESS: &str = "127.0.0.1:7338";
 
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, about, arg_required_else_help = true)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -109,6 +109,10 @@ enum BrowserCommand {
 pub fn main() {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
+        Err(error) if error.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+            let _ = write!(std::io::stdout().lock(), "{error}");
+            return;
+        }
         Err(error) if error.use_stderr() => {
             let message = error.to_string();
             let message = message.strip_prefix("error: ").unwrap_or(&message);
@@ -299,5 +303,17 @@ mod tests {
             Err(Error::SecretToTerminal)
         ));
         assert!(refuse_terminal(false).is_ok());
+    }
+
+    #[test]
+    fn shows_help_when_no_command_is_given() {
+        let Err(error) = Cli::try_parse_from(["psst"]) else {
+            panic!("expected help");
+        };
+
+        assert_eq!(
+            error.kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
     }
 }
