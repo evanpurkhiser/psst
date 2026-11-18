@@ -214,7 +214,12 @@ fn run_passkey(command: PasskeyCommand) -> Result<()> {
         } => with_proxy(|proxy| {
             proxy
                 .passkey_handoff(&session, &request_id)
-                .map_err(Error::from)
+                .map_err(Error::from)?;
+            writeln!(
+                std::io::stdout().lock(),
+                "Passkey response sent to browser."
+            )?;
+            Ok(())
         }),
     }
 }
