@@ -70,6 +70,14 @@ For the complete, version-matched operational workflow, run:
 psst skill
 ```
 
+## agent-browser credentials
+
+psst provides an agent-browser credential provider that resolves username
+and password fields from an open session without placing their values in command
+arguments.
+Configure agent-browser to run `psst agent-browser-plugin`,
+then use the workflow from `psst skill`.
+
 ## Chrome passkeys
 
 When a site requests a passkey,
