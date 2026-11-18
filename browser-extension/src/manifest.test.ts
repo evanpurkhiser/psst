@@ -12,5 +12,9 @@ describe('extension manifest', () => {
       'ISOLATED',
       'MAIN',
     ]);
+    expect(manifest.content_scripts[1]).toMatchObject({
+      all_frames: true,
+      match_about_blank: true,
+    });
   });
 });

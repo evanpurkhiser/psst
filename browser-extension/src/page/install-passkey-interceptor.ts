@@ -1,4 +1,4 @@
-import {dispatchPageEvent, listenForPageEvent} from '../page-events';
+import {dispatchPageEvent, listenForPageEvent, pageEventTarget} from '../page-events';
 import {events} from '../protocol';
 
 import {createPasskeyInterceptor} from './passkey-interceptor';
@@ -7,7 +7,7 @@ import {createPasskeyInterceptor} from './passkey-interceptor';
  * Connects the passkey interceptor to the page's Credentials API and events.
  */
 export const installPasskeyInterceptor = () => {
-  if (window !== window.top || Reflect.has(globalThis, '__psstPasskeyBridge')) {
+  if (!pageEventTarget() || Reflect.has(globalThis, '__psstPasskeyBridge')) {
     return;
   }
 
