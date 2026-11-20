@@ -1,3 +1,4 @@
+mod agent_browser_plugin;
 mod browser;
 mod cli;
 mod daemon;

@@ -47,6 +47,14 @@ Never print, inspect, log, summarize,
 or save a returned value unless the task explicitly requires a file.
 `get` and `download` refuse terminal output.
 
+For a username and password login, pass the session directly to agent-browser:
+
+```bash
+agent-browser --session BROWSER_SESSION auth login LOGIN_NAME \
+  --credential-provider psst --item SESSION_ID \
+  --url https://identity.example.com/login --no-navigate
+```
+
 ## Use a passkey
 
 Confirm that `fields` lists a passkey with the expected `rpId`,

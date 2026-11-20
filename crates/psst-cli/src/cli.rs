@@ -3,6 +3,7 @@ use std::{
     io::{IsTerminal, Read, Write},
     net::SocketAddr,
     os::fd::AsFd,
+    os::unix::net::UnixStream,
 };
 
 use crate::daemon::dbus::PsstProxyBlocking;
@@ -11,7 +12,7 @@ use zbus::{blocking::Connection, zvariant::Fd};
 use zeroize::Zeroizing;
 
 use crate::{
-    browser, daemon,
+    agent_browser_plugin, browser, daemon,
     domain::item::ItemSummary,
     error::{Error, Result},
     skill,
@@ -76,6 +77,9 @@ enum Command {
         /// Opaque session identifier.
         session: String,
     },
+    /// Serve the agent-browser plugin protocol.
+    #[command(hide = true)]
+    AgentBrowserPlugin,
     #[command(hide = true)]
     Daemon {
         #[arg(long, default_value = DEFAULT_SHARING_ADDRESS)]
@@ -129,6 +133,7 @@ fn run(command: Command) -> Result<()> {
             sharing_listen,
             browser_listen,
         } => tokio::runtime::Runtime::new()?.block_on(daemon::run(sharing_listen, browser_listen)),
+        Command::AgentBrowserPlugin => run_agent_browser_plugin(),
         Command::Open => open(),
         Command::Sessions { live: true } => live_sessions(),
         Command::Sessions { live: false } => {
@@ -160,6 +165,46 @@ fn run(command: Command) -> Result<()> {
             with_proxy(|proxy| proxy.close(&session).map_err(Error::from))
         }
     }
+}
+
+fn run_agent_browser_plugin() -> Result<()> {
+    let mut output = std::io::stdout().lock();
+    let result = agent_browser_plugin::read(std::io::stdin().lock()).and_then(|request| {
+        refuse_terminal(output.is_terminal())?;
+        resolve_agent_browser_credential(&request.session, &mut output)
+    });
+
+    if let Err(error) = result {
+        serde_json::to_writer(&mut output, &agent_browser_plugin::error_response(&error))?;
+    }
+    writeln!(output)?;
+
+    Ok(())
+}
+
+fn resolve_agent_browser_credential(session: &str, output: &mut impl Write) -> Result<()> {
+    with_proxy(|proxy| {
+        let username = read_secret(proxy, session, "username")?;
+        let password = read_secret(proxy, session, "password")?;
+
+        agent_browser_plugin::write_credential(output, &username, &password)
+    })
+}
+
+fn read_secret(
+    proxy: &PsstProxyBlocking<'_>,
+    session: &str,
+    field: &str,
+) -> Result<Zeroizing<String>> {
+    let (mut reader, writer) = UnixStream::pair()?;
+    proxy
+        .get(session, field, Fd::from(writer.as_fd()))
+        .map_err(Error::from)?;
+    drop(writer);
+
+    let mut value = Zeroizing::new(String::new());
+    reader.read_to_string(&mut value)?;
+    Ok(value)
 }
 
 fn live_sessions() -> Result<()> {
