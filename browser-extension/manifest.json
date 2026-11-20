@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "psst Passkeys",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Completes WebAuthn assertions authorized by a psst session.",
   "minimum_chrome_version": "115",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwoMWbYblwLpL7UKUlCQM2Z5g50ytD7nwPaRAtZvPumAoN8nEOsaXWG+c1Hr66/2bU4M7zIK9sgfbBJgczy+mYseO1kkS/1j6oXgOWd3C0+urJD7ChIEZcMxKxCDjZ+KlIjd5Jip7ZzuT8SMcP1+6I8+rpEVc9u+wZKjKpu7IVUtnasvNT+tv4D1hGTUtHUWMW3BdUZKpAJm1qCX1PUiu4Avh8ugue4ONJ2d95m52Ep/heqZktKinti0fdWA0In3ijW5rdTOgIkfWIK5uDO+LpjFZTabaQUlHtqSXVh/wmkREa23J2mpZPVEEKkoJoYEGAb41KewBjxcKaoSuq2acoQIDAQAB",
